@@ -8,7 +8,7 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
     "seed": "tsx src/seed.ts",
-    "test": "tsx src/smoke.test.ts && tsx src/phase1.test.ts && tsx src/phase2.test.ts",
+    "test": "tsx src/smoke.test.ts && tsx src/phase1.test.ts && tsx src/phase2.test.ts && tsx src/phase3.test.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {

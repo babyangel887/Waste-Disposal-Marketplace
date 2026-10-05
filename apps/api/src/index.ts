@@ -11,7 +11,7 @@ export const app = express();
 app.use(cors());
 app.use(express.json());
 
-app.get('/health', (_req, res) => res.json({ ok: true, phase: 2 }));
+app.get('/health', (_req, res) => res.json({ ok: true, phase: 3 }));
 
 // --- Auth: phone OTP (PRD §2.1) ---
 app.post('/api/v1/auth/request-otp', async (req, res) => {
@@ -188,9 +188,17 @@ app.get('/api/v1/bookings/:id', auth, (req: any, res) => {
   const row = db.prepare('SELECT * FROM bookings WHERE id = ?').get(req.params.id) as any;
   if (!row) return res.status(404).json({ error: 'booking not found' });
   const isOwner = row.customer_id === req.user.sub;
-  if (!isOwner && req.user.role !== 'admin') return res.status(403).json({ error: 'not your booking' });
+  const isVendor = row.vendor_id === req.user.sub;
+  if (!isOwner && !isVendor && req.user.role !== 'admin') return res.status(403).json({ error: 'not your booking' });
   const payment = db.prepare('SELECT * FROM payments WHERE booking_id = ?').get(req.params.id) as any;
-  res.json({ booking: serializeBooking(row), payment: payment ?? null });
+  const adjustment = db.prepare("SELECT * FROM quote_adjustments WHERE booking_id=? AND status='pending'").get(req.params.id) as any;
+  const history = db.prepare('SELECT * FROM job_status_history WHERE booking_id=? ORDER BY at ASC').all(req.params.id);
+  const booking = serializeBooking(row);
+  if (req.user.role === 'customer' && booking.vendor_id) {
+    const v = db.prepare('SELECT id FROM users WHERE id = ?').get(booking.vendor_id) as any;
+    booking.vendor = v ? { id: String(v.id).slice(0, 8) + '…' } : null;
+  }
+  res.json({ booking, payment: payment ?? null, adjustment: adjustment ?? null, history });
 });
 
 // Pre-payment cancel only (Phase 2). Post-payment cancel/refunds land in Phase 4.
@@ -236,8 +244,116 @@ app.post('/api/v1/bookings/:id/authorize-payment', auth, (req: any, res) => {
   ).run(payment.id, payment.booking_id, payment.provider, payment.authorization_code,
     payment.amount_ngn, payment.status, payment.gateway_ref, payment.idempotency_key, now, now);
   db.prepare('UPDATE bookings SET status=?, updated_at=? WHERE id=?').run('searching_vendor', now, req.params.id);
+  recordHistory(req.params.id, 'awaiting_payment', 'searching_vendor', req.user.sub, null, null);
+  createOffer(req.params.id);
   const updated = db.prepare('SELECT * FROM bookings WHERE id = ?').get(req.params.id);
   res.status(201).json({ payment, booking: serializeBooking(updated) });
+});
+
+// --- Matching: rolling 60s offer queue (Phase 3 mock; Redis/BullMQ in staging) ---
+const OFFER_TTL_SEC = Number(process.env.OFFER_TTL_SEC ?? 60);
+function recordHistory(bookingId: string, from: string, to: string, actorId: string, lat: number | null, lng: number | null) {
+  db.prepare(
+    'INSERT INTO job_status_history (id, booking_id, from_status, to_status, actor_id, lat, lng, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run(crypto.randomUUID(), bookingId, from, to, actorId, lat, lng, new Date().toISOString());
+}
+function eligibleVendors() {
+  // Least-busy first (fewest offers received), newest tie-break — fair + deterministic.
+  return db.prepare(
+    `SELECT u.id FROM users u JOIN vendor_profiles p ON p.user_id = u.id
+     LEFT JOIN job_offers o ON o.vendor_id = u.id
+     WHERE u.role='vendor' AND u.active=1 AND p.approved_status='approved' AND p.blocked=0
+     GROUP BY u.id ORDER BY COUNT(o.id) ASC, u.created_at DESC`
+  ).all() as any[];
+}
+function pendingOffer(bookingId: string) {
+  expireDueOffers();
+  return db.prepare(
+    "SELECT * FROM job_offers WHERE booking_id=? AND status='pending' AND expires_at > ? ORDER BY attempt_no DESC LIMIT 1"
+  ).get(bookingId, new Date().toISOString()) as any;
+}
+function createOffer(bookingId: string) {
+  const booking = db.prepare('SELECT * FROM bookings WHERE id = ?').get(bookingId) as any;
+  if (!booking || !['searching_vendor', 'offered'].includes(booking.status)) return null;
+  if (pendingOffer(bookingId)) return null;
+  const vendors = eligibleVendors();
+  if (vendors.length === 0) return null;
+  const attempt = ((db.prepare('SELECT COUNT(*) as c FROM job_offers WHERE booking_id=?').get(bookingId) as any).c as number) + 1;
+  if (attempt > 10) return null;
+  const vendor = vendors[(attempt - 1) % vendors.length];
+  const now = new Date();
+  const offer = {
+    id: crypto.randomUUID(), booking_id: bookingId, vendor_id: vendor.id,
+    expires_at: new Date(now.getTime() + OFFER_TTL_SEC * 1000).toISOString(),
+    status: 'pending', attempt_no: attempt, created_at: now.toISOString(),
+  };
+  db.prepare(
+    'INSERT INTO job_offers (id, booking_id, vendor_id, expires_at, status, attempt_no, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+  ).run(offer.id, offer.booking_id, offer.vendor_id, offer.expires_at, offer.status, offer.attempt_no, offer.created_at);
+  if (booking.status === 'searching_vendor') {
+    db.prepare('UPDATE bookings SET status=?, updated_at=? WHERE id=?').run('offered', now.toISOString(), bookingId);
+    recordHistory(bookingId, 'searching_vendor', 'offered', vendor.id, null, null);
+  }
+  return offer;
+}
+function expireDueOffers() {
+  const now = new Date().toISOString();
+  const due = db.prepare("SELECT * FROM job_offers WHERE status='pending' AND expires_at <= ?").all(now) as any[];
+  for (const o of due) {
+    db.prepare("UPDATE job_offers SET status='expired' WHERE id=?").run(o.id);
+    const booking = db.prepare('SELECT * FROM bookings WHERE id = ?').get(o.booking_id) as any;
+    if (booking && ['offered', 'searching_vendor'].includes(booking.status)) createOffer(o.booking_id);
+  }
+  return due.length;
+}
+
+app.get('/api/v1/vendor/jobs/offers', auth, (req: any, res) => {
+  if (req.user.role !== 'vendor') return res.status(403).json({ error: 'vendor role required' });
+  expireDueOffers();
+  const offers = db.prepare(
+    "SELECT * FROM job_offers WHERE vendor_id=? AND status='pending' AND expires_at > ? ORDER BY created_at DESC"
+  ).all(req.user.sub, new Date().toISOString()) as any[];
+  const enriched = offers.map((o: any) => {
+    const b = db.prepare('SELECT * FROM bookings WHERE id = ?').get(o.booking_id) as any;
+    return { offer: o, booking: b ? serializeBooking(b) : null, payout_ngn: b?.total_price ?? null };
+  });
+  res.json({ offers: enriched });
+});
+
+app.post('/api/v1/vendor/offers/:id/accept', auth, (req: any, res) => {
+  if (req.user.role !== 'vendor') return res.status(403).json({ error: 'vendor role required' });
+  expireDueOffers();
+  const offer = db.prepare('SELECT * FROM job_offers WHERE id = ?').get(req.params.id) as any;
+  if (!offer) return res.status(404).json({ error: 'offer not found' });
+  if (offer.vendor_id !== req.user.sub) return res.status(403).json({ error: 'not your offer' });
+  if (offer.status !== 'pending' || new Date(offer.expires_at).getTime() <= Date.now())
+    return res.status(409).json({ error: 'offer expired' });
+  const booking = db.prepare('SELECT * FROM bookings WHERE id = ?').get(offer.booking_id) as any;
+  if (!booking || !['offered', 'searching_vendor'].includes(booking.status))
+    return res.status(409).json({ error: `booking already ${booking?.status}` });
+  const now = new Date().toISOString();
+  db.prepare("UPDATE job_offers SET status='accepted' WHERE id=?").run(offer.id);
+  db.prepare("UPDATE job_offers SET status='expired' WHERE booking_id=? AND status='pending' AND id != ?").run(offer.booking_id, offer.id);
+  db.prepare('UPDATE bookings SET status=?, vendor_id=?, updated_at=? WHERE id=?').run('accepted', req.user.sub, now, offer.booking_id);
+  recordHistory(offer.booking_id, booking.status, 'accepted', req.user.sub, null, null);
+  res.json({ ok: true, booking_id: offer.booking_id, status: 'accepted' });
+});
+
+app.post('/api/v1/vendor/offers/:id/decline', auth, (req: any, res) => {
+  if (req.user.role !== 'vendor') return res.status(403).json({ error: 'vendor role required' });
+  const offer = db.prepare('SELECT * FROM job_offers WHERE id = ?').get(req.params.id) as any;
+  if (!offer) return res.status(404).json({ error: 'offer not found' });
+  if (offer.vendor_id !== req.user.sub) return res.status(403).json({ error: 'not your offer' });
+  if (offer.status !== 'pending') return res.status(409).json({ error: `offer already ${offer.status}` });
+  db.prepare("UPDATE job_offers SET status='declined' WHERE id=?").run(offer.id);
+  const next = createOffer(offer.booking_id);
+  res.json({ ok: true, status: 'declined', next_offer: next });
+});
+
+// Test/admin hook: expire pending offers now and roll to next vendor.
+app.post('/api/v1/admin/matching/expire-due', auth, requireAdmin, (_req: any, res) => {
+  const n = expireDueOffers();
+  res.json({ ok: true, expired: n });
 });
 
 // Idempotent mock webhooks. Real signature verification lands with live keys (Phase 4).
@@ -456,9 +572,157 @@ app.get('/api/v1/admin/pricing/history', auth, requireAdmin, (req: any, res) => 
   res.json({ history: db.prepare('SELECT * FROM pricing_history ORDER BY changed_at DESC LIMIT ?').all(limit) });
 });
 
+// --- Transit milestones (Phase 3; complete/split lands in Phase 4) ---
+const ACTIVE_TRACKING = ['accepted', 'en_route', 'arrived', 'loading', 'adjustment_pending'];
+function transitionBooking(bookingId: string, from: string, to: string, actorId: string, lat: number | null, lng: number | null) {
+  const now = new Date().toISOString();
+  db.prepare('UPDATE bookings SET status=?, updated_at=? WHERE id=?').run(to, now, bookingId);
+  recordHistory(bookingId, from, to, actorId, lat, lng);
+}
+function requireBookingVendor(bookingId: string, vendorId: string) {
+  const b = db.prepare('SELECT * FROM bookings WHERE id = ?').get(bookingId) as any;
+  if (!b) return { error: 'booking not found', status: 404 as const };
+  if (b.vendor_id !== vendorId) return { error: 'not your job', status: 403 as const };
+  return { booking: b };
+}
+
+app.post('/api/v1/vendor/jobs/:id/en-route', auth, (req: any, res) => {
+  if (req.user.role !== 'vendor') return res.status(403).json({ error: 'vendor role required' });
+  const r = requireBookingVendor(req.params.id, req.user.sub) as any;
+  if (r.error) return res.status(r.status).json({ error: r.error });
+  if (r.booking.status !== 'accepted') return res.status(409).json({ error: `must be accepted, is ${r.booking.status}` });
+  const lat = req.body?.lat != null ? Number(req.body.lat) : null;
+  const lng = req.body?.lng != null ? Number(req.body.lng) : null;
+  transitionBooking(req.params.id, 'accepted', 'en_route', req.user.sub, lat, lng);
+  res.json({ ok: true, status: 'en_route' });
+});
+
+app.post('/api/v1/vendor/jobs/:id/arrived', auth, (req: any, res) => {
+  if (req.user.role !== 'vendor') return res.status(403).json({ error: 'vendor role required' });
+  const r = requireBookingVendor(req.params.id, req.user.sub) as any;
+  if (r.error) return res.status(r.status).json({ error: r.error });
+  if (r.booking.status !== 'en_route') return res.status(409).json({ error: `must be en_route, is ${r.booking.status}` });
+  const now = new Date().toISOString();
+  const lat = req.body?.lat != null ? Number(req.body.lat) : null;
+  const lng = req.body?.lng != null ? Number(req.body.lng) : null;
+  db.prepare('UPDATE bookings SET arrived_at=?, updated_at=? WHERE id=?').run(now, now, req.params.id);
+  transitionBooking(req.params.id, 'en_route', 'arrived', req.user.sub, lat, lng);
+  res.json({ ok: true, status: 'arrived', arrived_at: now, wait_secs: 7 * 60 });
+});
+
+app.post('/api/v1/vendor/jobs/:id/loading', auth, (req: any, res) => {
+  if (req.user.role !== 'vendor') return res.status(403).json({ error: 'vendor role required' });
+  const r = requireBookingVendor(req.params.id, req.user.sub) as any;
+  if (r.error) return res.status(r.status).json({ error: r.error });
+  if (r.booking.status !== 'arrived') return res.status(409).json({ error: `must be arrived, is ${r.booking.status}` });
+  transitionBooking(req.params.id, 'arrived', 'loading', req.user.sub, null, null);
+  res.json({ ok: true, status: 'loading' });
+});
+
+// --- Adjust-quote (Phase 3, no cap; cancel-on-reject lands in Phase 4) ---
+app.post('/api/v1/vendor/jobs/:id/adjust-quote', auth, (req: any, res) => {
+  if (req.user.role !== 'vendor') return res.status(403).json({ error: 'vendor role required' });
+  const r = requireBookingVendor(req.params.id, req.user.sub) as any;
+  if (r.error) return res.status(r.status).json({ error: r.error });
+  if (!['arrived', 'loading'].includes(r.booking.status))
+    return res.status(409).json({ error: `adjust-quote allowed in arrived|loading, is ${r.booking.status}` });
+  const { new_total, reason, photo_key } = req.body ?? {};
+  const nt = Number(new_total);
+  if (!Number.isInteger(nt) || nt <= 0) return res.status(400).json({ error: 'new_total must be int > 0' });
+  if (!reason || typeof reason !== 'string') return res.status(400).json({ error: 'reason required' });
+  const existing = db.prepare("SELECT * FROM quote_adjustments WHERE booking_id=? AND status='pending'").get(req.params.id) as any;
+  if (existing) return res.status(409).json({ error: 'adjustment already pending' });
+  const now = new Date().toISOString();
+  const adj = {
+    id: crypto.randomUUID(), booking_id: req.params.id, vendor_id: req.user.sub,
+    old_total: r.booking.total_price, new_total: nt, reason: String(reason),
+    photo_key: photo_key ?? null, status: 'pending', decided_at: null, created_at: now,
+  };
+  db.prepare(
+    'INSERT INTO quote_adjustments (id, booking_id, vendor_id, old_total, new_total, reason, photo_key, status, decided_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run(adj.id, adj.booking_id, adj.vendor_id, adj.old_total, adj.new_total, adj.reason, adj.photo_key, adj.status, adj.decided_at, adj.created_at);
+  transitionBooking(req.params.id, r.booking.status, 'adjustment_pending', req.user.sub, null, null);
+  res.status(201).json({ adjustment: adj });
+});
+
+app.post('/api/v1/bookings/:id/adjustments/:adjId/approve', auth, (req: any, res) => {
+  if (req.user.role !== 'customer') return res.status(403).json({ error: 'customer role required' });
+  const booking = db.prepare('SELECT * FROM bookings WHERE id = ?').get(req.params.id) as any;
+  if (!booking) return res.status(404).json({ error: 'booking not found' });
+  if (booking.customer_id !== req.user.sub) return res.status(403).json({ error: 'not your booking' });
+  const adj = db.prepare('SELECT * FROM quote_adjustments WHERE id = ?').get(req.params.adjId) as any;
+  if (!adj || adj.booking_id !== req.params.id) return res.status(404).json({ error: 'adjustment not found' });
+  if (adj.status !== 'pending') return res.status(409).json({ error: `adjustment already ${adj.status}` });
+  const now = new Date().toISOString();
+  db.prepare("UPDATE quote_adjustments SET status='approved', decided_at=? WHERE id=?").run(now, adj.id);
+  db.prepare('UPDATE bookings SET total_price=?, updated_at=? WHERE id=?').run(adj.new_total, now, req.params.id);
+  db.prepare('UPDATE payments SET amount_ngn=?, gateway_ref=?, updated_at=? WHERE booking_id=?').run(
+    adj.new_total, `mock_rehold_adj_${adj.id.slice(0, 8)}`, now, req.params.id);
+  transitionBooking(req.params.id, 'adjustment_pending', 'loading', req.user.sub, null, null);
+  res.json({ ok: true, status: 'loading', new_total: adj.new_total });
+});
+
+app.post('/api/v1/bookings/:id/adjustments/:adjId/reject', auth, (req: any, res) => {
+  if (req.user.role !== 'customer') return res.status(403).json({ error: 'customer role required' });
+  const booking = db.prepare('SELECT * FROM bookings WHERE id = ?').get(req.params.id) as any;
+  if (!booking) return res.status(404).json({ error: 'booking not found' });
+  if (booking.customer_id !== req.user.sub) return res.status(403).json({ error: 'not your booking' });
+  const adj = db.prepare('SELECT * FROM quote_adjustments WHERE id = ?').get(req.params.adjId) as any;
+  if (!adj || adj.booking_id !== req.params.id) return res.status(404).json({ error: 'adjustment not found' });
+  if (adj.status !== 'pending') return res.status(409).json({ error: `adjustment already ${adj.status}` });
+  const now = new Date().toISOString();
+  db.prepare("UPDATE quote_adjustments SET status='rejected', decided_at=? WHERE id=?").run(now, adj.id);
+  transitionBooking(req.params.id, 'adjustment_pending', 'arrived', req.user.sub, null, null);
+  res.json({ ok: true, status: 'arrived', note: 'Phase 4 will cancel + apply fuel fee on reject' });
+});
+
+// --- Heartbeat tracking (Phase 3 mock; window-only, no 30s reject) ---
+app.post('/api/v1/tracking/ping', auth, (req: any, res) => {
+  if (req.user.role !== 'vendor') return res.status(403).json({ error: 'vendor role required' });
+  const { booking_id, lat, lng, accuracy } = req.body ?? {};
+  const booking = db.prepare('SELECT * FROM bookings WHERE id = ?').get(String(booking_id)) as any;
+  if (!booking) return res.status(404).json({ error: 'booking not found' });
+  if (booking.vendor_id !== req.user.sub) return res.status(403).json({ error: 'not your job' });
+  if (!ACTIVE_TRACKING.includes(booking.status))
+    return res.status(409).json({ error: `tracking closed (status ${booking.status})` });
+  const la = Number(lat); const ln = Number(lng);
+  if (!Number.isFinite(la) || !Number.isFinite(ln)) return res.status(400).json({ error: 'lat + lng required' });
+  const now = new Date().toISOString();
+  db.prepare(
+    'INSERT INTO location_pings (id, booking_id, vendor_id, lat, lng, accuracy, recorded_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+  ).run(crypto.randomUUID(), String(booking_id), req.user.sub, la, ln, accuracy != null ? Number(accuracy) : null, now);
+  res.json({ ok: true, recorded_at: now });
+});
+
+function lastPing(bookingId: string) {
+  return db.prepare('SELECT lat, lng, recorded_at FROM location_pings WHERE booking_id=? ORDER BY recorded_at DESC LIMIT 1').get(bookingId) as any;
+}
+
+app.get('/api/v1/bookings/:id/location', auth, (req: any, res) => {
+  const booking = db.prepare('SELECT * FROM bookings WHERE id = ?').get(req.params.id) as any;
+  if (!booking) return res.status(404).json({ error: 'booking not found' });
+  if (req.user.role === 'customer') {
+    if (booking.customer_id !== req.user.sub) return res.status(403).json({ error: 'not your booking' });
+    if (booking.status !== 'en_route') return res.status(403).json({ error: 'location visible only while en_route' });
+  } else if (req.user.role === 'vendor') {
+    if (booking.vendor_id !== req.user.sub) return res.status(403).json({ error: 'not your job' });
+  } else if (req.user.role !== 'admin') return res.status(403).json({ error: 'forbidden' });
+  if (req.user.role === 'admin' && !ACTIVE_TRACKING.includes(booking.status))
+    return res.status(403).json({ error: 'tracking closed' });
+  res.json({ last: lastPing(req.params.id) ?? null, status: booking.status });
+});
+
 // --- Admin: active jobs map stub (Phase 1; live tracking lands in Phase 3) ---
 app.get('/api/v1/admin/jobs/active', auth, requireAdmin, (_req: any, res) => {
-  res.json({ jobs: [], note: 'Phase 1 stub — shape: [{booking_id, vendor_id, last_lat, last_lng, last_at, status}]. Live heartbeats in Phase 3.' });
+  const rows = db.prepare(
+    `SELECT id as booking_id, vendor_id, status FROM bookings WHERE status IN ('accepted','en_route','arrived','loading','adjustment_pending') ORDER BY updated_at DESC LIMIT 100`
+  ).all() as any[];
+  res.json({
+    jobs: rows.map((r: any) => {
+      const lp = lastPing(r.booking_id) as any;
+      return { ...r, last_lat: lp?.lat ?? null, last_lng: lp?.lng ?? null, last_at: lp?.recorded_at ?? null };
+    }),
+  });
 });
 
 // --- Admin stub (expanded in Phase 1) ---
@@ -473,5 +737,5 @@ const PORT = Number(process.env.PORT ?? 4000);
 const isMain = (process.argv[1] ?? '').replace(/\\/g, '/').endsWith('apps/api/src/index.ts')
   || (process.argv[1] ?? '').replace(/\\/g, '/').endsWith('apps/api/dist/index.js');
 if (isMain) {
-  app.listen(PORT, () => console.log(`[api] Phase 0 listening on :${PORT}`));
+  app.listen(PORT, () => console.log(`[api] Phase 3 listening on :${PORT}`));
 }

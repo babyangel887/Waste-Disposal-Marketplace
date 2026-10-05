@@ -131,7 +131,54 @@ CREATE TABLE IF NOT EXISTS payments (
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS job_offers (
+  id TEXT PRIMARY KEY,
+  booking_id TEXT NOT NULL,
+  vendor_id TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  attempt_no INTEGER NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS job_status_history (
+  id TEXT PRIMARY KEY,
+  booking_id TEXT NOT NULL,
+  from_status TEXT NOT NULL,
+  to_status TEXT NOT NULL,
+  actor_id TEXT NOT NULL,
+  lat REAL,
+  lng REAL,
+  at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS location_pings (
+  id TEXT PRIMARY KEY,
+  booking_id TEXT NOT NULL,
+  vendor_id TEXT NOT NULL,
+  lat REAL NOT NULL,
+  lng REAL NOT NULL,
+  accuracy REAL,
+  recorded_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS quote_adjustments (
+  id TEXT PRIMARY KEY,
+  booking_id TEXT NOT NULL,
+  vendor_id TEXT NOT NULL,
+  old_total INTEGER NOT NULL,
+  new_total INTEGER NOT NULL,
+  reason TEXT NOT NULL,
+  photo_key TEXT,
+  status TEXT NOT NULL DEFAULT 'pending',
+  decided_at TEXT,
+  created_at TEXT NOT NULL
+);
 `);
+
+// Phase 3 migration: bookings gains vendor_id + arrived_at (existing dev.db files).
+for (const col of ['vendor_id TEXT', 'arrived_at TEXT']) {
+  const name = col.split(' ')[0];
+  const cols = db.prepare('PRAGMA table_info(bookings)').all() as any[];
+  if (!cols.some((c) => c.name === name)) db.exec(`ALTER TABLE bookings ADD COLUMN ${col}`);
+}
 
 // Seed DB-backed pricing from shared defaults (Phase 1: DB is authoritative).
 import { WASTE_CATEGORIES, PILOT_LGAS } from '@waste/shared';

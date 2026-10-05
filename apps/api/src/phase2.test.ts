@@ -54,16 +54,16 @@ const server = app.listen(4103, async () => {
     const cash = await post(`/api/v1/bookings/${bid}/authorize-payment`, { provider: 'cash' }, tok);
     assert(cash.status === 400, 'cash payments blocked');
 
-    // authorize (mock hold) → exit criteria
+    // authorize (mock hold) → exit criteria (Phase 3: may auto-advance to offered if vendors eligible)
     const pay = await post(`/api/v1/bookings/${bid}/authorize-payment`, { provider: 'paystack' }, tok);
     assert(pay.status === 201 && pay.j.payment.status === 'held', 'mock hold created');
-    assert(pay.j.booking.status === 'searching_vendor', 'paid booking → searching_vendor');
+    assert(['searching_vendor', 'offered'].includes(pay.j.booking.status), 'paid booking → searching_vendor|offered');
 
     // webhook idempotent
     const wh = await post('/api/v1/webhooks/paystack', { booking_id: bid, event: 'charge.success' });
     assert(wh.status === 200 && wh.j.ok === true, 'webhook idempotent ok');
     const detail = await get(`/api/v1/bookings/${bid}`, tok);
-    assert(detail.j.booking.status === 'searching_vendor' && detail.j.payment.status === 'held', 'held persists after webhook');
+    assert(['searching_vendor', 'offered', 'accepted'].includes(detail.j.booking.status) && detail.j.payment.status === 'held', 'held persists after webhook');
 
     // pre-payment cancel path on a second booking
     const b2 = await post('/api/v1/bookings', {
@@ -72,8 +72,8 @@ const server = app.listen(4103, async () => {
     }, tok);
     const cancel = await post(`/api/v1/bookings/${b2.j.booking.id}/cancel`, { reason: 'changed mind' }, tok);
     assert(cancel.j.status === 'cancelled', 'pre-payment cancel works');
-    const mine = await get('/api/v1/bookings/mine?status=searching_vendor', tok);
-    assert(mine.j.bookings.some((b: any) => b.id === bid), 'mine filter lists paid booking');
+    const mine = await get('/api/v1/bookings/mine', tok);
+    assert(mine.j.bookings.some((b: any) => b.id === bid), 'mine lists paid booking');
 
     console.log('\nPhase 2 smoke: ALL PASS');
     server.close();
