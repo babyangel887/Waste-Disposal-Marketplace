@@ -23,22 +23,30 @@ On-demand Lagos marketplace connecting residents/businesses with private waste v
 Prereqs: Node 20+ (tested on 24), PowerShell 5.1+, ports 4000 free. No Docker/Git required for local API.
 
 ```powershell
-# API-only (fast, recommended for Phase 0-2):
+# API-only (fast, recommended for Phase 0-3):
 npm install --workspace=@waste/shared --workspace=apps/api
 npm run build --workspace=@waste/shared
 npm run build --workspace=apps/api
 npm run seed --workspace=apps/api
 npm run dev --workspace=apps/api   # :4000, blocks — run in its own terminal
 # new terminal:
-npm run test --workspace=apps/api  # smoke (:4101) + phase1 (:4102) + phase2 (:4103)
+npm run test --workspace=apps/api  # smoke (:4101) + phase1 (:4102) + phase2 (:4103) + phase3 (:4104)
 
 # Full monorepo (admin + mobile — heavy, Next.js + RN):
 npm install
 ```
 
-Health check: `GET http://127.0.0.1:4000/health` → `{"ok":true,"phase":2}`
+Health check: `GET http://127.0.0.1:4000/health` → `{"ok":true,"phase":3}`
 Catalog: `GET http://127.0.0.1:4000/api/v1/catalog` → 4 categories / 2 LGAs (DB-backed).
 Env: copy `.env.example` to `.env`. For real SMS set `OTP_MODE=termii` + `TERMII_API_KEY`. Never commit real secrets.
+
+## Status: Phases 0–3 DONE + verified — Next: Phase 4
+
+- [x] Phase 0 — Foundation: DONE + verified
+- [x] Phase 1 — Vendor onboarding + Admin console: DONE + verified
+- [x] Phase 2 — Customer booking + payments (mock): DONE + verified
+- [x] Phase 3 — Matching + Tracking + Adjustments: DONE + verified
+- [ ] Phase 4 — Completion, refunds, disputes: NEXT
 
 ## Phase 0 status — DONE + verified
 
@@ -64,6 +72,14 @@ Env: copy `.env.example` to `.env`. For real SMS set `OTP_MODE=termii` + `TERMII
 - [x] Customer app: `BookingScreen` (picker + qty estimator + photo key + estimate + book+pay) wired in `App.tsx`
 - Verified: `shared + api typecheck/build` pass, `smoke.test` 7/7 + `phase1.test` 14/14 + `phase2.test` 12/12 pass (photo/pilot validation, 6500 snapshot, cash blocked, held + searching_vendor, webhook persists, pre-payment cancel, mine filter).
 
-## Next (Phase 3 — Matching + Tracking + Adjustments)
+## Phase 3 status — DONE + verified
 
-Per implementation plan: 60-sec rolling vendor offer queue, vendor offer accept/decline, background heartbeat tracking + socket fan-out, en-route → arrived (7-min timer) → loading, adjust-quote approve/reject. Exit: end-to-end accept → track → arrive.
+- [x] Rolling 60s offer queue: auto-offer on payment, `GET /vendor/jobs/offers` (photo/volume/payout), accept/decline, least-busy-first matching, `POST /admin/matching/expire-due` hook
+- [x] Milestones + tracking: `en-route → arrived` (7-min timer) `→ loading`, `POST /tracking/ping` (window-only), `GET /bookings/:id/location` (customer en_route-only), live `GET /admin/jobs/active`
+- [x] Adjust-quote (no cap): vendor submit → `adjustment_pending`, customer approve (mock re-hold + loading) / reject (back to arrived); booking detail includes masked vendor + adjustment + history
+- [x] App stubs: vendor `OffersScreen` + `backgroundTracking` heartbeat contract, customer `JobTracking`
+- Verified: `shared + api typecheck/build` pass, `smoke.test` 7/7 + `phase1.test` 14/14 + `phase2.test` 12/12 + `phase3.test` 17/17 pass (offer+payout, accept, privacy hidden→visible en_route, ping, arrived+timer, adjust+2000 re-hold, live map).
+
+## Next (Phase 4 — Completion, refunds, disputes)
+
+Per implementation plan: complete → split transfer to vendor bank + receipt, cancel rules (>5min, 7-min absent + 3 calls, >30min late, adjustment-reject → ₦3,000 penalty), dispute timeline (photos, pings, adjustments), earnings + transfer status. Exit: all 7.1/7.2 scenarios pass with mocked gateway.
