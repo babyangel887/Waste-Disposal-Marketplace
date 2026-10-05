@@ -11,7 +11,7 @@ export const app = express();
 app.use(cors());
 app.use(express.json());
 
-app.get('/health', (_req, res) => res.json({ ok: true, phase: 1 }));
+app.get('/health', (_req, res) => res.json({ ok: true, phase: 2 }));
 
 // --- Auth: phone OTP (PRD §2.1) ---
 app.post('/api/v1/auth/request-otp', async (req, res) => {
@@ -131,6 +131,136 @@ app.post('/api/v1/bookings/estimate', (req, res) => {
 
 app.get('/api/v1/catalog', (_req, res) => {
   res.json({ categories: dbCategories(), lgas: dbLGAs(), currency: 'NGN' });
+});
+
+// --- Customer bookings (Phase 2: creation with photo required, pilot-gated) ---
+function serializeBooking(row: any) {
+  if (!row) return row;
+  try { row.photo_keys = JSON.parse(row.photo_keys); } catch { row.photo_keys = []; }
+  return row;
+}
+
+app.post('/api/v1/bookings', auth, (req: any, res) => {
+  if (req.user.role !== 'customer') return res.status(403).json({ error: 'customer role required' });
+  const { category_slug, qty, lga, pickup_lat, pickup_lng, pickup_address, photo_keys } = req.body ?? {};
+  const q = Number(qty);
+  if (!Number.isInteger(q) || q <= 0 || q > 100)
+    return res.status(400).json({ error: 'qty must be integer 1..100' });
+  if (!Array.isArray(photo_keys) || photo_keys.length < 1 || photo_keys.length > 5)
+    return res.status(400).json({ error: 'photo_keys required: 1..5 file keys' });
+  if (!photo_keys.every((k: any) => typeof k === 'string' && k.length > 0))
+    return res.status(400).json({ error: 'photo_keys must be non-empty strings' });
+  const lat = Number(pickup_lat); const lng = Number(pickup_lng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng))
+    return res.status(400).json({ error: 'pickup_lat + pickup_lng required' });
+  if (!pickup_address || typeof pickup_address !== 'string')
+    return res.status(400).json({ error: 'pickup_address required' });
+  let price: any;
+  try { price = dbEstimate(String(category_slug), q, String(lga)); }
+  catch (e: any) { return res.status(400).json({ error: e.message }); }
+  const cats = dbCategories() as any[]; const lgas = dbLGAs() as any[];
+  const cat = cats.find((c) => c.slug === String(category_slug));
+  const lgaRow = lgas.find((l: any) => String(l.name).toLowerCase() === String(lga).toLowerCase());
+  const now = new Date().toISOString();
+  const id = crypto.randomUUID();
+  db.prepare(
+    `INSERT INTO bookings (id, customer_id, category_id, category_slug, lga_id, lga_name, qty,
+      pickup_lat, pickup_lng, pickup_address, photo_keys,
+      base_rate, lga_surcharge, special_fee, total_price, status, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'awaiting_payment', ?, ?)`
+  ).run(id, req.user.sub, cat.id, cat.slug, lgaRow.id, lgaRow.name, q,
+    lat, lng, String(pickup_address), JSON.stringify(photo_keys),
+    price.baseRate, price.lgaSurcharge, price.specialFee, price.total, now, now);
+  const row = db.prepare('SELECT * FROM bookings WHERE id = ?').get(id);
+  res.status(201).json({ booking: serializeBooking(row) });
+});
+
+app.get('/api/v1/bookings/mine', auth, (req: any, res) => {
+  if (req.user.role !== 'customer') return res.status(403).json({ error: 'customer role required' });
+  const status = req.query.status ? String(req.query.status) : null;
+  const rows = (status
+    ? db.prepare('SELECT * FROM bookings WHERE customer_id = ? AND status = ? ORDER BY created_at DESC').all(req.user.sub, status)
+    : db.prepare('SELECT * FROM bookings WHERE customer_id = ? ORDER BY created_at DESC').all(req.user.sub)) as any[];
+  res.json({ bookings: rows.map(serializeBooking) });
+});
+
+app.get('/api/v1/bookings/:id', auth, (req: any, res) => {
+  const row = db.prepare('SELECT * FROM bookings WHERE id = ?').get(req.params.id) as any;
+  if (!row) return res.status(404).json({ error: 'booking not found' });
+  const isOwner = row.customer_id === req.user.sub;
+  if (!isOwner && req.user.role !== 'admin') return res.status(403).json({ error: 'not your booking' });
+  const payment = db.prepare('SELECT * FROM payments WHERE booking_id = ?').get(req.params.id) as any;
+  res.json({ booking: serializeBooking(row), payment: payment ?? null });
+});
+
+// Pre-payment cancel only (Phase 2). Post-payment cancel/refunds land in Phase 4.
+app.post('/api/v1/bookings/:id/cancel', auth, (req: any, res) => {
+  const row = db.prepare('SELECT * FROM bookings WHERE id = ?').get(req.params.id) as any;
+  if (!row) return res.status(404).json({ error: 'booking not found' });
+  if (row.customer_id !== req.user.sub) return res.status(403).json({ error: 'not your booking' });
+  if (row.status !== 'awaiting_payment')
+    return res.status(409).json({ error: 'only awaiting_payment bookings can be cancelled in Phase 2' });
+  const now = new Date().toISOString();
+  db.prepare('UPDATE bookings SET status=?, cancel_reason=?, updated_at=? WHERE id=?').run(
+    'cancelled', String(req.body?.reason ?? 'customer_cancelled'), now, req.params.id);
+  res.json({ ok: true, status: 'cancelled' });
+});
+
+// --- Payments: gateway-led escrow mock (Phase 2). No wallet, no cash. ---
+const MOCK_PROVIDERS = ['paystack', 'flutterwave'];
+app.post('/api/v1/bookings/:id/authorize-payment', auth, (req: any, res) => {
+  if (req.user.role !== 'customer') return res.status(403).json({ error: 'customer role required' });
+  const { provider } = req.body ?? {};
+  if (typeof provider === 'string' && ['cash', 'cod', 'cash_on_delivery'].includes(provider.toLowerCase()))
+    return res.status(400).json({ error: 'cash payments are blocked; use paystack or flutterwave' });
+  if (!MOCK_PROVIDERS.includes(provider))
+    return res.status(400).json({ error: 'provider must be paystack or flutterwave' });
+  const booking = db.prepare('SELECT * FROM bookings WHERE id = ?').get(req.params.id) as any;
+  if (!booking) return res.status(404).json({ error: 'booking not found' });
+  if (booking.customer_id !== req.user.sub) return res.status(403).json({ error: 'not your booking' });
+  if (booking.status !== 'awaiting_payment')
+    return res.status(409).json({ error: `booking already ${booking.status}` });
+  const existing = db.prepare('SELECT * FROM payments WHERE booking_id = ?').get(req.params.id) as any;
+  if (existing) return res.json({ payment: existing, booking: serializeBooking(booking) });
+  const now = new Date().toISOString();
+  const prefix = provider === 'paystack' ? 'AUTH' : 'FLW';
+  const payment = {
+    id: crypto.randomUUID(), booking_id: req.params.id, provider,
+    authorization_code: `${prefix}_mock_${crypto.randomUUID().slice(0, 8)}`,
+    amount_ngn: booking.total_price, status: 'held',
+    gateway_ref: `mock_${provider}_charge_success_${Date.now()}`,
+    idempotency_key: `auth:${req.params.id}`, created_at: now, updated_at: now,
+  };
+  db.prepare(
+    'INSERT INTO payments (id, booking_id, provider, authorization_code, amount_ngn, status, gateway_ref, idempotency_key, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run(payment.id, payment.booking_id, payment.provider, payment.authorization_code,
+    payment.amount_ngn, payment.status, payment.gateway_ref, payment.idempotency_key, now, now);
+  db.prepare('UPDATE bookings SET status=?, updated_at=? WHERE id=?').run('searching_vendor', now, req.params.id);
+  const updated = db.prepare('SELECT * FROM bookings WHERE id = ?').get(req.params.id);
+  res.status(201).json({ payment, booking: serializeBooking(updated) });
+});
+
+// Idempotent mock webhooks. Real signature verification lands with live keys (Phase 4).
+function handleMockWebhook(provider: string, body: any) {
+  const { booking_id, event } = body ?? {};
+  if (!booking_id) return { status: 400 as const, json: { error: 'booking_id required' } };
+  if (provider === 'flutterwave') return { status: 200 as const, json: { ok: true, stub: true } };
+  if (event && event !== 'charge.success') return { status: 200 as const, json: { ok: true, ignored: event } };
+  const payment = db.prepare('SELECT * FROM payments WHERE booking_id = ?').get(String(booking_id)) as any;
+  if (!payment) return { status: 200 as const, json: { ok: true, ignored: 'no payment yet' } };
+  const now = new Date().toISOString();
+  db.prepare('UPDATE payments SET status=?, gateway_ref=?, updated_at=? WHERE booking_id=?').run(
+    'held', payment.gateway_ref ?? `mock_${provider}_charge_success`, now, String(booking_id));
+  db.prepare("UPDATE bookings SET status='searching_vendor', updated_at=? WHERE id=? AND status='awaiting_payment'").run(now, String(booking_id));
+  return { status: 200 as const, json: { ok: true } };
+}
+app.post('/api/v1/webhooks/paystack', (req, res) => {
+  const r = handleMockWebhook('paystack', req.body);
+  res.status(r.status).json(r.json);
+});
+app.post('/api/v1/webhooks/flutterwave', (req, res) => {
+  const r = handleMockWebhook('flutterwave', req.body);
+  res.status(r.status).json(r.json);
 });
 
 // --- Upload presign (photos/docs). Phase 0: local signed URL; prod: S3. ---

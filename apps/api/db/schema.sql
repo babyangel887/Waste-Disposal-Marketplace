@@ -1,4 +1,5 @@
 -- Phase 1 canonical schema for staging/prod (Postgres + PostGIS).
+-- Phase 2 adds bookings + payments (gateway-led escrow, no wallet).
 -- Local dev uses node:sqlite with an equivalent subset (see src/db.ts).
 -- Run: psql $DATABASE_URL -f db/schema.sql
 
@@ -113,4 +114,41 @@ CREATE TABLE IF NOT EXISTS audit_logs (
   target_id TEXT NOT NULL,
   meta JSONB,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS bookings (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  customer_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  category_id TEXT NOT NULL REFERENCES waste_categories(id),
+  category_slug TEXT NOT NULL,
+  lga_id TEXT NOT NULL REFERENCES lgas(id),
+  lga_name TEXT NOT NULL,
+  qty INT NOT NULL CHECK (qty > 0),
+  pickup_lat DOUBLE PRECISION NOT NULL,
+  pickup_lng DOUBLE PRECISION NOT NULL,
+  pickup_address TEXT NOT NULL,
+  photo_keys JSONB NOT NULL,
+  base_rate_ngn INT NOT NULL,
+  lga_surcharge_ngn INT NOT NULL,
+  special_fee_ngn INT NOT NULL,
+  total_price_ngn INT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'awaiting_payment'
+    CHECK (status IN ('awaiting_payment','searching_vendor','cancelled')),
+  cancel_reason TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS payments (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  booking_id UUID NOT NULL UNIQUE REFERENCES bookings(id) ON DELETE CASCADE,
+  provider TEXT NOT NULL CHECK (provider IN ('paystack','flutterwave')),
+  authorization_code TEXT,
+  amount_ngn INT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'authorized'
+    CHECK (status IN ('authorized','held','failed')),
+  gateway_ref TEXT,
+  idempotency_key TEXT NOT NULL UNIQUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );

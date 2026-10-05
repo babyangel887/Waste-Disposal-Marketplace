@@ -98,6 +98,39 @@ CREATE TABLE IF NOT EXISTS audit_logs (
   meta TEXT,
   created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS bookings (
+  id TEXT PRIMARY KEY,
+  customer_id TEXT NOT NULL,
+  category_id TEXT NOT NULL,
+  category_slug TEXT NOT NULL,
+  lga_id TEXT NOT NULL,
+  lga_name TEXT NOT NULL,
+  qty INTEGER NOT NULL,
+  pickup_lat REAL NOT NULL,
+  pickup_lng REAL NOT NULL,
+  pickup_address TEXT NOT NULL,
+  photo_keys TEXT NOT NULL,
+  base_rate INTEGER NOT NULL,
+  lga_surcharge INTEGER NOT NULL,
+  special_fee INTEGER NOT NULL,
+  total_price INTEGER NOT NULL,
+  status TEXT NOT NULL DEFAULT 'awaiting_payment',
+  cancel_reason TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS payments (
+  id TEXT PRIMARY KEY,
+  booking_id TEXT NOT NULL UNIQUE,
+  provider TEXT NOT NULL,
+  authorization_code TEXT,
+  amount_ngn INTEGER NOT NULL,
+  status TEXT NOT NULL DEFAULT 'authorized',
+  gateway_ref TEXT,
+  idempotency_key TEXT NOT NULL UNIQUE,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
 `);
 
 // Seed DB-backed pricing from shared defaults (Phase 1: DB is authoritative).
