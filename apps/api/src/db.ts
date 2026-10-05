@@ -36,4 +36,81 @@ CREATE TABLE IF NOT EXISTS consent_logs (
   accepted_at TEXT NOT NULL,
   ip TEXT
 );
+CREATE TABLE IF NOT EXISTS vendor_profiles (
+  user_id TEXT PRIMARY KEY,
+  business_name TEXT NOT NULL,
+  license_no TEXT,
+  approved_status TEXT NOT NULL DEFAULT 'pending',
+  rejection_reason TEXT,
+  approved_by TEXT,
+  approved_at TEXT,
+  blocked INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS vehicles (
+  id TEXT PRIMARY KEY,
+  vendor_id TEXT NOT NULL,
+  plate_no TEXT NOT NULL,
+  type TEXT NOT NULL,
+  capacity_kg INTEGER,
+  photo_key TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS vendor_documents (
+  id TEXT PRIMARY KEY,
+  vendor_id TEXT NOT NULL,
+  type TEXT NOT NULL,
+  file_key TEXT NOT NULL,
+  verified INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  UNIQUE(vendor_id, type)
+);
+CREATE TABLE IF NOT EXISTS waste_categories (
+  id TEXT PRIMARY KEY,
+  slug TEXT NOT NULL UNIQUE,
+  label TEXT NOT NULL,
+  base_rate_ngn INTEGER NOT NULL,
+  unit TEXT NOT NULL,
+  special_fee_ngn INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS lgas (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,
+  surcharge_ngn INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS pricing_history (
+  id TEXT PRIMARY KEY,
+  entity_type TEXT NOT NULL,
+  entity_id TEXT NOT NULL,
+  field TEXT NOT NULL,
+  old_value INTEGER NOT NULL,
+  new_value INTEGER NOT NULL,
+  changed_by TEXT NOT NULL,
+  changed_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS audit_logs (
+  id TEXT PRIMARY KEY,
+  actor_id TEXT NOT NULL,
+  action TEXT NOT NULL,
+  target_type TEXT NOT NULL,
+  target_id TEXT NOT NULL,
+  meta TEXT,
+  created_at TEXT NOT NULL
+);
 `);
+
+// Seed DB-backed pricing from shared defaults (Phase 1: DB is authoritative).
+import { WASTE_CATEGORIES, PILOT_LGAS } from '@waste/shared';
+for (const c of WASTE_CATEGORIES) {
+  db.prepare(
+    'INSERT INTO waste_categories (id, slug, label, base_rate_ngn, unit, special_fee_ngn) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING'
+  ).run(c.id, c.slug, c.label, c.baseRateNGN, c.unit, c.specialFeeNGN);
+}
+for (const l of PILOT_LGAS) {
+  db.prepare('INSERT INTO lgas (id, name, surcharge_ngn) VALUES (?, ?, ?) ON CONFLICT(id) DO NOTHING').run(
+    l.id,
+    l.name,
+    l.surchargeNGN
+  );
+}

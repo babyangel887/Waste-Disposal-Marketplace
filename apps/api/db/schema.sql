@@ -1,4 +1,4 @@
--- Phase 0 canonical schema for staging/prod (Postgres + PostGIS).
+-- Phase 1 canonical schema for staging/prod (Postgres + PostGIS).
 -- Local dev uses node:sqlite with an equivalent subset (see src/db.ts).
 -- Run: psql $DATABASE_URL -f db/schema.sql
 
@@ -60,3 +60,57 @@ INSERT INTO waste_categories (id, slug, label, base_rate_ngn, unit, special_fee_
   ('cat-rubble','rubble','Renovation Rubble',25000,'trip',5000),
   ('cat-recyclable','recyclable','Recyclables (sorted)',0,'bag',0)
 ON CONFLICT (id) DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS vendor_profiles (
+  user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  business_name TEXT NOT NULL,
+  license_no TEXT,
+  approved_status TEXT NOT NULL DEFAULT 'pending' CHECK (approved_status IN ('pending','approved','rejected')),
+  rejection_reason TEXT,
+  approved_by UUID REFERENCES users(id),
+  approved_at TIMESTAMPTZ,
+  blocked BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS vehicles (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  vendor_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  plate_no TEXT NOT NULL,
+  type TEXT NOT NULL,
+  capacity_kg INT,
+  photo_key TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS vendor_documents (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  vendor_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  type TEXT NOT NULL CHECK (type IN ('vehicle_reg','drivers_license','business_doc')),
+  file_key TEXT NOT NULL,
+  verified BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(vendor_id, type)
+);
+
+CREATE TABLE IF NOT EXISTS pricing_history (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  entity_type TEXT NOT NULL CHECK (entity_type IN ('category','lga')),
+  entity_id TEXT NOT NULL,
+  field TEXT NOT NULL,
+  old_value INT NOT NULL,
+  new_value INT NOT NULL,
+  changed_by UUID NOT NULL REFERENCES users(id),
+  changed_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS audit_logs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  actor_id UUID NOT NULL REFERENCES users(id),
+  action TEXT NOT NULL,
+  target_type TEXT NOT NULL,
+  target_id TEXT NOT NULL,
+  meta JSONB,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
