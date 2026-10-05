@@ -11,6 +11,7 @@ jobs:
         with:
           node-version: 20
       - run: npm ci
+      - run: npm run build --workspace=@waste/shared
       - run: npm run typecheck --workspaces --if-present
       - run: npm run build --workspaces --if-present
       - run: npm run test --workspace=apps/api --if-present
