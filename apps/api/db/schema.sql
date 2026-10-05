@@ -1,0 +1,62 @@
+-- Phase 0 canonical schema for staging/prod (Postgres + PostGIS).
+-- Local dev uses node:sqlite with an equivalent subset (see src/db.ts).
+-- Run: psql $DATABASE_URL -f db/schema.sql
+
+CREATE EXTENSION IF NOT EXISTS postgis;
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+
+CREATE TABLE IF NOT EXISTS users (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  role TEXT NOT NULL CHECK (role IN ('customer','vendor','admin')),
+  phone TEXT NOT NULL UNIQUE,
+  phone_verified BOOLEAN NOT NULL DEFAULT FALSE,
+  name TEXT,
+  active BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS otp_codes (
+  phone TEXT PRIMARY KEY,
+  code_hash TEXT NOT NULL,
+  expires_at TIMESTAMPTZ NOT NULL,
+  attempts INT NOT NULL DEFAULT 0,
+  last_sent_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS consent_logs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  consent_type TEXT NOT NULL,
+  version TEXT NOT NULL,
+  accepted_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  ip TEXT
+);
+
+CREATE TABLE IF NOT EXISTS lgas (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,
+  surcharge_ngn INT NOT NULL,
+  geom GEOMETRY(MultiPolygon, 4326)
+);
+
+CREATE TABLE IF NOT EXISTS waste_categories (
+  id TEXT PRIMARY KEY,
+  slug TEXT NOT NULL UNIQUE,
+  label TEXT NOT NULL,
+  base_rate_ngn INT NOT NULL,
+  unit TEXT NOT NULL,
+  special_fee_ngn INT NOT NULL DEFAULT 0
+);
+
+-- Pilot seed (mirrors packages/shared)
+INSERT INTO lgas (id, name, surcharge_ngn) VALUES
+  ('lga-eti-osa','Eti-Osa',5000),
+  ('lga-ikeja','Ikeja',3500)
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO waste_categories (id, slug, label, base_rate_ngn, unit, special_fee_ngn) VALUES
+  ('cat-bagged','bagged','Excess Bagged Waste',1500,'bag',0),
+  ('cat-bulky','bulky','Bulky Items',12000,'item',2000),
+  ('cat-rubble','rubble','Renovation Rubble',25000,'trip',5000),
+  ('cat-recyclable','recyclable','Recyclables (sorted)',0,'bag',0)
+ON CONFLICT (id) DO NOTHING;

@@ -1,0 +1,19 @@
+{
+  "name": "customer",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "android": "echo \"Phase 1: react-native run-android (bare workflow + background-geolocation)\"",
+    "ios": "echo \"Phase 1: npx pod-install + run-ios\""
+  },
+  "dependencies": {
+    "@waste/shared": "0.1.0",
+    "react": "18.3.1",
+    "react-native": "0.75.2"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.2",
+    "@types/react": "^18.3.3"
+  }
+}
