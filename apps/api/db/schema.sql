@@ -1,5 +1,6 @@
 -- Phase 1 canonical schema for staging/prod (Postgres + PostGIS).
 -- Phase 2 adds bookings + payments (gateway-led escrow, no wallet).
+-- Phase 4 adds cancellations + disputes + payouts (mock split transfers).
 -- Local dev uses node:sqlite with an equivalent subset (see src/db.ts).
 -- Run: psql $DATABASE_URL -f db/schema.sql
 
@@ -199,5 +200,62 @@ CREATE TABLE IF NOT EXISTS quote_adjustments (
   photo_key TEXT,
   status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','approved','rejected')),
   decided_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+ALTER TABLE bookings DROP CONSTRAINT IF EXISTS bookings_status_check;
+ALTER TABLE bookings ADD CONSTRAINT bookings_status_check CHECK (status IN (
+  'awaiting_payment','searching_vendor','offered','accepted','en_route',
+  'arrived','loading','adjustment_pending','completed','cancelled','disputed'));
+
+ALTER TABLE payments DROP CONSTRAINT IF EXISTS payments_status_check;
+ALTER TABLE payments ADD CONSTRAINT payments_status_check CHECK (status IN (
+  'authorized','held','split','refunded','partial_refund','failed'));
+
+CREATE TABLE IF NOT EXISTS cancellations (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  booking_id UUID NOT NULL UNIQUE REFERENCES bookings(id) ON DELETE CASCADE,
+  cancelled_by UUID NOT NULL REFERENCES users(id),
+  reason_code TEXT NOT NULL,
+  vendor_at_fault BOOLEAN NOT NULL DEFAULT FALSE,
+  penalty_ngn INT NOT NULL DEFAULT 0,
+  refund_ngn INT NOT NULL DEFAULT 0,
+  gateway_reversal_ref TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS disputes (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  booking_id UUID NOT NULL REFERENCES bookings(id) ON DELETE CASCADE,
+  raised_by UUID NOT NULL REFERENCES users(id),
+  category TEXT NOT NULL,
+  notes TEXT,
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','resolved')),
+  resolution JSONB,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  resolved_at TIMESTAMPTZ
+);
+
+CREATE TABLE IF NOT EXISTS payouts (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  booking_id UUID NOT NULL UNIQUE REFERENCES bookings(id) ON DELETE CASCADE,
+  vendor_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  amount_ngn INT NOT NULL,
+  penalty_ngn INT NOT NULL DEFAULT 0,
+  provider TEXT NOT NULL,
+  transfer_ref TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'completed',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS otp_sends (
+  phone TEXT NOT NULL,
+  sent_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS waitlist (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  lga TEXT NOT NULL,
+  phone TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );

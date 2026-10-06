@@ -171,6 +171,49 @@ CREATE TABLE IF NOT EXISTS quote_adjustments (
   decided_at TEXT,
   created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS cancellations (
+  id TEXT PRIMARY KEY,
+  booking_id TEXT NOT NULL UNIQUE,
+  cancelled_by TEXT NOT NULL,
+  reason_code TEXT NOT NULL,
+  vendor_at_fault INTEGER NOT NULL DEFAULT 0,
+  penalty_ngn INTEGER NOT NULL DEFAULT 0,
+  refund_ngn INTEGER NOT NULL DEFAULT 0,
+  gateway_reversal_ref TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS disputes (
+  id TEXT PRIMARY KEY,
+  booking_id TEXT NOT NULL,
+  raised_by TEXT NOT NULL,
+  category TEXT NOT NULL,
+  notes TEXT,
+  status TEXT NOT NULL DEFAULT 'open',
+  resolution TEXT,
+  created_at TEXT NOT NULL,
+  resolved_at TEXT
+);
+CREATE TABLE IF NOT EXISTS payouts (
+  id TEXT PRIMARY KEY,
+  booking_id TEXT NOT NULL UNIQUE,
+  vendor_id TEXT NOT NULL,
+  amount_ngn INTEGER NOT NULL,
+  penalty_ngn INTEGER NOT NULL DEFAULT 0,
+  provider TEXT NOT NULL,
+  transfer_ref TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'completed',
+  created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS otp_sends (
+  phone TEXT NOT NULL,
+  sent_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS waitlist (
+  id TEXT PRIMARY KEY,
+  lga TEXT NOT NULL,
+  phone TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
 `);
 
 // Phase 3 migration: bookings gains vendor_id + arrived_at (existing dev.db files).

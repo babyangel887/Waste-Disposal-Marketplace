@@ -11,7 +11,7 @@ export const app = express();
 app.use(cors());
 app.use(express.json());
 
-app.get('/health', (_req, res) => res.json({ ok: true, phase: 3 }));
+app.get('/health', (_req, res) => res.json({ ok: true, phase: 5 }));
 
 // --- Auth: phone OTP (PRD §2.1) ---
 app.post('/api/v1/auth/request-otp', async (req, res) => {
@@ -73,6 +73,51 @@ function auth(req: any, res: any, next: any) {
 app.get('/api/v1/me', auth, (req: any, res) => {
   const u = db.prepare('SELECT id, role, phone, name FROM users WHERE id = ?').get(req.user.sub);
   res.json(u);
+});
+
+// --- NDPA privacy info: policy version, DPO contact, retention (no secrets) ---
+app.get('/api/v1/privacy', (_req, res) => {
+  res.json({
+    policy_version: PRIVACY_POLICY_VERSION,
+    dpo: process.env.DPO_CONTACT ?? 'dpo@example.com (placeholder — replace before launch)',
+    retention_days: { location_pings: 90, waste_photos: 365 },
+    tracking: 'location collected only during active jobs, heartbeat 30–60s, stops on complete/cancel',
+    payments: 'funds held by licensed gateway only; no proprietary wallet',
+  });
+});
+
+// --- NDPA data rights: export my data + delete my account ---
+app.get('/api/v1/me/export', auth, (req: any, res) => {
+  const user = db.prepare('SELECT id, role, phone, name, created_at FROM users WHERE id = ?').get(req.user.sub);
+  res.json({
+    user,
+    consent_logs: db.prepare('SELECT consent_type, version, accepted_at FROM consent_logs WHERE user_id=?').all(req.user.sub),
+    bookings: db.prepare('SELECT * FROM bookings WHERE customer_id=? OR vendor_id=?').all(req.user.sub, req.user.sub),
+    payments: db.prepare('SELECT * FROM payments WHERE booking_id IN (SELECT id FROM bookings WHERE customer_id=? OR vendor_id=?)').all(req.user.sub, req.user.sub),
+    payouts: db.prepare('SELECT * FROM payouts WHERE vendor_id=?').all(req.user.sub),
+    disputes: db.prepare('SELECT * FROM disputes WHERE raised_by=?').all(req.user.sub),
+  });
+});
+
+app.delete('/api/v1/me', auth, (req: any, res) => {
+  const now = new Date().toISOString();
+  const u = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.sub) as any;
+  if (!u) return res.status(404).json({ error: 'not found' });
+  db.prepare('UPDATE users SET name=NULL, phone=?, active=0 WHERE id=?').run(`deleted_${req.user.sub}`, req.user.sub);
+  db.prepare('UPDATE vendor_profiles SET blocked=1 WHERE user_id=?').run(req.user.sub);
+  db.prepare('DELETE FROM otp_codes WHERE phone=?').run(u.phone);
+  audit(req.user.sub, 'account.delete', 'user', req.user.sub, { at: now });
+  res.json({ ok: true, deleted_at: now });
+});
+
+// --- Retention purge: location pings older than 90 days (admin; run as cron) ---
+const RETENTION_PING_DAYS = 90;
+app.post('/api/v1/admin/retention/purge', auth, requireAdmin, (req: any, res) => {
+  const cutoff = new Date(Date.now() - RETENTION_PING_DAYS * 24 * 3600 * 1000).toISOString();
+  const n = (db.prepare('SELECT COUNT(*) as c FROM location_pings WHERE recorded_at < ?').get(cutoff) as any).c as number;
+  db.prepare('DELETE FROM location_pings WHERE recorded_at < ?').run(cutoff);
+  audit(req.user.sub, 'retention.purge_pings', 'system', 'location_pings', { cutoff, deleted: n });
+  res.json({ ok: true, deleted_pings: n, cutoff, retention_days: RETENTION_PING_DAYS });
 });
 
 // --- NDPA consent (PRD §5.1) ---
@@ -191,6 +236,7 @@ app.get('/api/v1/bookings/:id', auth, (req: any, res) => {
   const isVendor = row.vendor_id === req.user.sub;
   if (!isOwner && !isVendor && req.user.role !== 'admin') return res.status(403).json({ error: 'not your booking' });
   const payment = db.prepare('SELECT * FROM payments WHERE booking_id = ?').get(req.params.id) as any;
+  const payout = db.prepare('SELECT * FROM payouts WHERE booking_id = ?').get(req.params.id) as any;
   const adjustment = db.prepare("SELECT * FROM quote_adjustments WHERE booking_id=? AND status='pending'").get(req.params.id) as any;
   const history = db.prepare('SELECT * FROM job_status_history WHERE booking_id=? ORDER BY at ASC').all(req.params.id);
   const booking = serializeBooking(row);
@@ -198,20 +244,105 @@ app.get('/api/v1/bookings/:id', auth, (req: any, res) => {
     const v = db.prepare('SELECT id FROM users WHERE id = ?').get(booking.vendor_id) as any;
     booking.vendor = v ? { id: String(v.id).slice(0, 8) + '…' } : null;
   }
-  res.json({ booking, payment: payment ?? null, adjustment: adjustment ?? null, history });
+  res.json({ booking, payment: payment ?? null, payout: payout ?? null, adjustment: adjustment ?? null, history });
 });
 
-// Pre-payment cancel only (Phase 2). Post-payment cancel/refunds land in Phase 4.
+// Cancel rules (Phase 4, PRD §7, mocked gateway; amounts in NGN).
+// 7.1 vendor fault (no-show, >30min late) → full refund, no penalty.
+// 7.2 customer fault (late change-mind, absent, adjustment-reject) → ₦3,000 fuel fee to vendor, rest refunded.
+const FUEL_PENALTY_NGN = 3000;
+const VENDOR_FAULT_CODES = ['vendor_no_show', 'vendor_late'];
+const CUSTOMER_FAULT_CODES = ['customer_change_mind', 'customer_absent', 'adjustment_rejected'];
+function minutesSince(bookingId: string, toStatus: string) {
+  const h = db.prepare('SELECT at FROM job_status_history WHERE booking_id=? AND to_status=? ORDER BY at ASC LIMIT 1').get(bookingId, toStatus) as any;
+  if (!h) return null;
+  return (Date.now() - new Date(h.at).getTime()) / 60000;
+}
+function settleCancel(booking: any, cancelledBy: string, reasonCode: string, vendorAtFault: boolean, penalty: number) {
+  const now = new Date().toISOString();
+  const total = booking.total_price;
+  const pen = Math.max(0, Math.min(penalty, total));
+  const refund = total - pen;
+  const payment = db.prepare('SELECT * FROM payments WHERE booking_id = ?').get(booking.id) as any;
+  const reversalRef = `mock_reversal_${crypto.randomUUID().slice(0, 8)}`;
+  if (payment && payment.status === 'held') {
+    db.prepare('UPDATE payments SET status=?, gateway_ref=?, updated_at=? WHERE booking_id=?').run(
+      pen > 0 ? (refund > 0 ? 'partial_refund' : 'refunded') : 'refunded', reversalRef, now, booking.id);
+  }
+  let payout: any = null;
+  if (pen > 0 && booking.vendor_id) {
+    payout = {
+      id: crypto.randomUUID(), booking_id: booking.id, vendor_id: booking.vendor_id,
+      amount_ngn: pen, penalty_ngn: pen, provider: payment?.provider ?? 'paystack',
+      transfer_ref: `mock_fuel_${crypto.randomUUID().slice(0, 8)}`, status: 'completed', created_at: now,
+    };
+    db.prepare(
+      'INSERT INTO payouts (id, booking_id, vendor_id, amount_ngn, penalty_ngn, provider, transfer_ref, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    ).run(payout.id, payout.booking_id, payout.vendor_id, payout.amount_ngn, pen, payout.provider, payout.transfer_ref, 'completed', now);
+  }
+  db.prepare(
+    'INSERT INTO cancellations (id, booking_id, cancelled_by, reason_code, vendor_at_fault, penalty_ngn, refund_ngn, gateway_reversal_ref, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run(crypto.randomUUID(), booking.id, cancelledBy, reasonCode, vendorAtFault ? 1 : 0, pen, refund, reversalRef, now);
+  db.prepare('UPDATE bookings SET status=?, cancel_reason=?, updated_at=? WHERE id=?').run('cancelled', reasonCode, now, booking.id);
+  recordHistory(booking.id, booking.status, 'cancelled', cancelledBy, null, null);
+  return { penalty_ngn: pen, refund_ngn: refund, payout, reversal_ref: reversalRef };
+}
+
 app.post('/api/v1/bookings/:id/cancel', auth, (req: any, res) => {
   const row = db.prepare('SELECT * FROM bookings WHERE id = ?').get(req.params.id) as any;
   if (!row) return res.status(404).json({ error: 'booking not found' });
   if (row.customer_id !== req.user.sub) return res.status(403).json({ error: 'not your booking' });
-  if (row.status !== 'awaiting_payment')
-    return res.status(409).json({ error: 'only awaiting_payment bookings can be cancelled in Phase 2' });
+  if (['completed', 'cancelled', 'disputed'].includes(row.status))
+    return res.status(409).json({ error: `booking already ${row.status}` });
+  const reason = String(req.body?.reason ?? 'customer_change_mind');
   const now = new Date().toISOString();
-  db.prepare('UPDATE bookings SET status=?, cancel_reason=?, updated_at=? WHERE id=?').run(
-    'cancelled', String(req.body?.reason ?? 'customer_cancelled'), now, req.params.id);
-  res.json({ ok: true, status: 'cancelled' });
+  // Pre-payment: no money moves (Phase 2 path preserved).
+  if (row.status === 'awaiting_payment') {
+    db.prepare(
+      'INSERT INTO cancellations (id, booking_id, cancelled_by, reason_code, vendor_at_fault, penalty_ngn, refund_ngn, gateway_reversal_ref, created_at) VALUES (?, ?, ?, ?, 0, 0, 0, NULL, ?)'
+    ).run(crypto.randomUUID(), row.id, req.user.sub, reason, now);
+    db.prepare('UPDATE bookings SET status=?, cancel_reason=?, updated_at=? WHERE id=?').run('cancelled', reason, now, row.id);
+    recordHistory(row.id, row.status, 'cancelled', req.user.sub, null, null);
+    return res.json({ ok: true, status: 'cancelled', penalty_ngn: 0, refund_ngn: 0 });
+  }
+  // Post-payment active window only.
+  if (!['searching_vendor', 'offered', 'accepted', 'en_route', 'arrived', 'loading', 'adjustment_pending'].includes(row.status))
+    return res.status(409).json({ error: `cannot cancel from ${row.status}` });
+  if (VENDOR_FAULT_CODES.includes(reason)) {
+    const mins = minutesSince(row.id, 'accepted');
+    const s = settleCancel(row, req.user.sub, reason, true, 0);
+    return res.json({ ok: true, status: 'cancelled', vendor_at_fault: true, minutes_since_accept: mins, ...s });
+  }
+  if (CUSTOMER_FAULT_CODES.includes(reason)) {
+    // Grace: change-mind within 5 min of accept → no penalty.
+    if (reason === 'customer_change_mind') {
+      const mins = minutesSince(row.id, 'accepted');
+      if (mins !== null && mins <= 5) {
+        const s = settleCancel(row, req.user.sub, reason, false, 0);
+        return res.json({ ok: true, status: 'cancelled', vendor_at_fault: false, grace: true, ...s });
+      }
+    }
+    const s = settleCancel(row, req.user.sub, reason, false, FUEL_PENALTY_NGN);
+    return res.json({ ok: true, status: 'cancelled', vendor_at_fault: false, ...s });
+  }
+  return res.status(400).json({ error: `reason must be ${[...VENDOR_FAULT_CODES, ...CUSTOMER_FAULT_CODES].join('|')} (or cancel pre-payment)` });
+});
+
+// Vendor flags customer absent: arrived + waited 7 min + 3 calls → customer-fault cancel.
+app.post('/api/v1/vendor/jobs/:id/no-show', auth, (req: any, res) => {
+  if (req.user.role !== 'vendor') return res.status(403).json({ error: 'vendor role required' });
+  const r = requireBookingVendor(req.params.id, req.user.sub) as any;
+  if (r.error) return res.status(r.status).json({ error: r.error });
+  if (r.booking.status !== 'arrived') return res.status(409).json({ error: `must be arrived, is ${r.booking.status}` });
+  const { calls_made, waited_secs } = req.body ?? {};
+  if (Number(calls_made) < 3) return res.status(400).json({ error: 'calls_made must be >= 3' });
+  if (Number(waited_secs) < 7 * 60) return res.status(400).json({ error: 'waited_secs must be >= 420 (7 min)' });
+  // Fraud guardrail (Phase 5): max 3 no-show flags per vendor per day.
+  const today = new Date().toISOString().slice(0, 10);
+  const flags = (db.prepare("SELECT COUNT(*) as c FROM cancellations WHERE cancelled_by=? AND reason_code='customer_absent' AND substr(created_at,1,10)=?").get(req.user.sub, today) as any).c as number;
+  if (flags >= 3) return res.status(429).json({ error: 'no-show flag limit: max 3 per day' });
+  const s = settleCancel(r.booking, req.user.sub, 'customer_absent', false, FUEL_PENALTY_NGN);
+  res.json({ ok: true, status: 'cancelled', ...s });
 });
 
 // --- Payments: gateway-led escrow mock (Phase 2). No wallet, no cash. ---
@@ -619,6 +750,44 @@ app.post('/api/v1/vendor/jobs/:id/loading', auth, (req: any, res) => {
   res.json({ ok: true, status: 'loading' });
 });
 
+// --- Completion + mock split transfer (Phase 4; licensed provider in prod) ---
+app.post('/api/v1/vendor/jobs/:id/complete', auth, (req: any, res) => {
+  if (req.user.role !== 'vendor') return res.status(403).json({ error: 'vendor role required' });
+  const r = requireBookingVendor(req.params.id, req.user.sub) as any;
+  if (r.error) return res.status(r.status).json({ error: r.error });
+  if (r.booking.status === 'completed') {
+    const payout = db.prepare('SELECT * FROM payouts WHERE booking_id = ?').get(req.params.id);
+    return res.json({ ok: true, status: 'completed', payout, idempotent: true });
+  }
+  if (!['arrived', 'loading'].includes(r.booking.status))
+    return res.status(409).json({ error: `complete allowed from arrived|loading, is ${r.booking.status}` });
+  const payment = db.prepare('SELECT * FROM payments WHERE booking_id = ?').get(req.params.id) as any;
+  if (!payment || payment.status !== 'held')
+    return res.status(409).json({ error: 'no held payment to split' });
+  const now = new Date().toISOString();
+  const payout = {
+    id: crypto.randomUUID(), booking_id: req.params.id, vendor_id: req.user.sub,
+    amount_ngn: r.booking.total_price, penalty_ngn: 0, provider: payment.provider,
+    transfer_ref: `mock_transfer_${crypto.randomUUID().slice(0, 8)}`,
+    status: 'completed', created_at: now,
+  };
+  db.prepare(
+    'INSERT INTO payouts (id, booking_id, vendor_id, amount_ngn, penalty_ngn, provider, transfer_ref, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run(payout.id, payout.booking_id, payout.vendor_id, payout.amount_ngn, 0, payout.provider, payout.transfer_ref, 'completed', now);
+  db.prepare('UPDATE payments SET status=?, updated_at=? WHERE booking_id=?').run('split', now, req.params.id);
+  transitionBooking(req.params.id, r.booking.status, 'completed', req.user.sub,
+    req.body?.lat != null ? Number(req.body.lat) : null,
+    req.body?.lng != null ? Number(req.body.lng) : null);
+  res.json({
+    ok: true, status: 'completed',
+    receipt: {
+      booking_id: req.params.id, total_ngn: r.booking.total_price,
+      vendor_payout_ngn: payout.amount_ngn, transfer_ref: payout.transfer_ref,
+      completed_at: now, currency: 'NGN',
+    },
+  });
+});
+
 // --- Adjust-quote (Phase 3, no cap; cancel-on-reject lands in Phase 4) ---
 app.post('/api/v1/vendor/jobs/:id/adjust-quote', auth, (req: any, res) => {
   if (req.user.role !== 'vendor') return res.status(403).json({ error: 'vendor role required' });
@@ -629,6 +798,9 @@ app.post('/api/v1/vendor/jobs/:id/adjust-quote', auth, (req: any, res) => {
   const { new_total, reason, photo_key } = req.body ?? {};
   const nt = Number(new_total);
   if (!Number.isInteger(nt) || nt <= 0) return res.status(400).json({ error: 'new_total must be int > 0' });
+  // Fraud guardrail (Phase 5): adjustments capped at 2x original total.
+  if (nt > 2 * r.booking.total_price)
+    return res.status(422).json({ error: `new_total capped at 2x original (${2 * r.booking.total_price} NGN)` });
   if (!reason || typeof reason !== 'string') return res.status(400).json({ error: 'reason required' });
   const existing = db.prepare("SELECT * FROM quote_adjustments WHERE booking_id=? AND status='pending'").get(req.params.id) as any;
   if (existing) return res.status(409).json({ error: 'adjustment already pending' });
@@ -673,7 +845,7 @@ app.post('/api/v1/bookings/:id/adjustments/:adjId/reject', auth, (req: any, res)
   const now = new Date().toISOString();
   db.prepare("UPDATE quote_adjustments SET status='rejected', decided_at=? WHERE id=?").run(now, adj.id);
   transitionBooking(req.params.id, 'adjustment_pending', 'arrived', req.user.sub, null, null);
-  res.json({ ok: true, status: 'arrived', note: 'Phase 4 will cancel + apply fuel fee on reject' });
+  res.json({ ok: true, status: 'arrived', note: 'cancel with reason adjustment_rejected to apply ₦3,000 fuel fee' });
 });
 
 // --- Heartbeat tracking (Phase 3 mock; window-only, no 30s reject) ---
@@ -725,7 +897,156 @@ app.get('/api/v1/admin/jobs/active', auth, requireAdmin, (_req: any, res) => {
   });
 });
 
-// --- Admin stub (expanded in Phase 1) ---
+// --- Dispute center (Phase 4 mock; photos/pings/adjustments timeline) ---
+app.post('/api/v1/disputes', auth, (req: any, res) => {
+  if (!['customer', 'vendor'].includes(req.user.role)) return res.status(403).json({ error: 'customer/vendor only' });
+  const { booking_id, category, notes } = req.body ?? {};
+  const booking = db.prepare('SELECT * FROM bookings WHERE id = ?').get(String(booking_id)) as any;
+  if (!booking) return res.status(404).json({ error: 'booking not found' });
+  const involved = booking.customer_id === req.user.sub || booking.vendor_id === req.user.sub;
+  if (!involved) return res.status(403).json({ error: 'not your booking' });
+  if (!['completed', 'cancelled'].includes(booking.status))
+    return res.status(409).json({ error: `disputes allowed on completed|cancelled, is ${booking.status}` });
+  if (!category || typeof category !== 'string') return res.status(400).json({ error: 'category required' });
+  const now = new Date().toISOString();
+  const d = {
+    id: crypto.randomUUID(), booking_id: String(booking_id), raised_by: req.user.sub,
+    category: String(category), notes: notes ?? null, status: 'open',
+    resolution: null, created_at: now, resolved_at: null,
+  };
+  db.prepare(
+    'INSERT INTO disputes (id, booking_id, raised_by, category, notes, status, resolution, created_at, resolved_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run(d.id, d.booking_id, d.raised_by, d.category, d.notes, d.status, d.resolution, d.created_at, d.resolved_at);
+  res.status(201).json({ dispute: d });
+});
+
+app.get('/api/v1/disputes/mine', auth, (req: any, res) => {
+  if (!['customer', 'vendor'].includes(req.user.role)) return res.status(403).json({ error: 'customer/vendor only' });
+  res.json({ disputes: db.prepare('SELECT * FROM disputes WHERE raised_by=? ORDER BY created_at DESC').all(req.user.sub) });
+});
+
+app.get('/api/v1/admin/disputes', auth, requireAdmin, (req: any, res) => {
+  const status = req.query.status ? String(req.query.status) : 'open';
+  const rows = (status === 'all'
+    ? db.prepare('SELECT * FROM disputes ORDER BY created_at DESC').all()
+    : db.prepare('SELECT * FROM disputes WHERE status=? ORDER BY created_at DESC').all(status)) as any[];
+  res.json({ disputes: rows });
+});
+
+app.get('/api/v1/admin/jobs/:id/timeline', auth, requireAdmin, (req: any, res) => {
+  const booking = db.prepare('SELECT * FROM bookings WHERE id = ?').get(req.params.id) as any;
+  if (!booking) return res.status(404).json({ error: 'booking not found' });
+  res.json({
+    booking: serializeBooking(booking),
+    history: db.prepare('SELECT * FROM job_status_history WHERE booking_id=? ORDER BY at ASC').all(req.params.id),
+    pings: db.prepare('SELECT lat, lng, accuracy, recorded_at FROM location_pings WHERE booking_id=? ORDER BY recorded_at ASC').all(req.params.id),
+    adjustments: db.prepare('SELECT * FROM quote_adjustments WHERE booking_id=? ORDER BY created_at ASC').all(req.params.id),
+    payment: db.prepare('SELECT * FROM payments WHERE booking_id = ?').get(req.params.id) ?? null,
+    payout: db.prepare('SELECT * FROM payouts WHERE booking_id = ?').get(req.params.id) ?? null,
+    cancellation: db.prepare('SELECT * FROM cancellations WHERE booking_id = ?').get(req.params.id) ?? null,
+    disputes: db.prepare('SELECT * FROM disputes WHERE booking_id=? ORDER BY created_at ASC').all(req.params.id),
+  });
+});
+
+app.post('/api/v1/admin/disputes/:id/resolve', auth, requireAdmin, (req: any, res) => {
+  const { action, penalty_ngn, note } = req.body ?? {};
+  if (!['refund_vendor', 'refund_customer', 'split'].includes(action))
+    return res.status(400).json({ error: 'action must be refund_vendor|refund_customer|split' });
+  const d = db.prepare('SELECT * FROM disputes WHERE id = ?').get(req.params.id) as any;
+  if (!d) return res.status(404).json({ error: 'dispute not found' });
+  if (d.status !== 'open') return res.status(409).json({ error: `dispute already ${d.status}` });
+  const now = new Date().toISOString();
+  const booking = db.prepare('SELECT * FROM bookings WHERE id = ?').get(d.booking_id) as any;
+  const payment = db.prepare('SELECT * FROM payments WHERE booking_id = ?').get(d.booking_id) as any;
+  const pen = Math.max(0, Number(penalty_ngn ?? 0) || 0);
+  // Money moves only if escrow still held; settled jobs get record-only resolution + audit.
+  let money: any = { moved: false };
+  if (payment && payment.status === 'held' && booking) {
+    if (action === 'refund_customer') {
+      db.prepare('UPDATE payments SET status=?, updated_at=? WHERE booking_id=?').run('refunded', now, d.booking_id);
+      money = { moved: true, refund_ngn: payment.amount_ngn };
+    } else if (action === 'refund_vendor' && booking.vendor_id) {
+      const payout = {
+        id: crypto.randomUUID(), booking_id: d.booking_id, vendor_id: booking.vendor_id,
+        amount_ngn: payment.amount_ngn, penalty_ngn: 0, provider: payment.provider,
+        transfer_ref: `mock_dispute_${crypto.randomUUID().slice(0, 8)}`, status: 'completed', created_at: now,
+      };
+      db.prepare(
+        'INSERT INTO payouts (id, booking_id, vendor_id, amount_ngn, penalty_ngn, provider, transfer_ref, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+      ).run(payout.id, payout.booking_id, payout.vendor_id, payout.amount_ngn, 0, payout.provider, payout.transfer_ref, 'completed', now);
+      db.prepare('UPDATE payments SET status=?, updated_at=? WHERE booking_id=?').run('split', now, d.booking_id);
+      money = { moved: true, vendor_payout_ngn: payout.amount_ngn };
+    } else if (action === 'split' && booking.vendor_id) {
+      const vendorShare = Math.min(pen > 0 ? pen : FUEL_PENALTY_NGN, payment.amount_ngn);
+      money = { moved: true, vendor_payout_ngn: vendorShare, refund_ngn: payment.amount_ngn - vendorShare };
+      db.prepare('UPDATE payments SET status=?, updated_at=? WHERE booking_id=?').run('partial_refund', now, d.booking_id);
+    }
+  }
+  const resolution = JSON.stringify({ action, penalty_ngn: pen, note: note ?? null, money });
+  db.prepare("UPDATE disputes SET status='resolved', resolution=?, resolved_at=? WHERE id=?").run(resolution, now, req.params.id);
+  if (booking && booking.status !== 'disputed') {
+    db.prepare('UPDATE bookings SET status=?, updated_at=? WHERE id=?').run('disputed', now, d.booking_id);
+    recordHistory(d.booking_id, booking.status, 'disputed', req.user.sub, null, null);
+  }
+  audit(req.user.sub, 'dispute.resolve', 'dispute', req.params.id, { action, penalty_ngn: pen });
+  res.json({ ok: true, status: 'resolved', money });
+});
+
+// --- Vendor earnings (Phase 4 mock transfers) ---
+app.get('/api/v1/vendor/earnings', auth, (req: any, res) => {
+  if (req.user.role !== 'vendor') return res.status(403).json({ error: 'vendor role required' });
+  const transfers = db.prepare('SELECT * FROM payouts WHERE vendor_id=? ORDER BY created_at DESC').all(req.user.sub) as any[];
+  const completed = transfers.filter((t) => t.status === 'completed').reduce((s: number, t: any) => s + t.amount_ngn, 0);
+  const active = (db.prepare("SELECT COUNT(*) as c FROM bookings WHERE vendor_id=? AND status IN ('accepted','en_route','arrived','loading','adjustment_pending')").get(req.user.sub) as any).c;
+  res.json({ completed_payout_ngn: completed, currency: 'NGN', transfers, active_jobs: active });
+});
+
+// --- Pilot waitlist: outside-pilot LGAs join the queue instead of booking ---
+app.post('/api/v1/waitlist', (req, res) => {
+  const { lga, phone } = req.body ?? {};
+  if (!lga || typeof lga !== 'string') return res.status(400).json({ error: 'lga required' });
+  const clean = String(phone ?? '').replace(/\s/g, '');
+  if (!/^\+?[0-9]{7,15}$/.test(clean)) return res.status(400).json({ error: 'invalid phone format' });
+  const pilot = (dbLGAs() as any[]).some((l) => String(l.name).toLowerCase() === String(lga).toLowerCase());
+  if (pilot) return res.status(400).json({ error: 'pilot already covers this LGA — book directly' });
+  const now = new Date().toISOString();
+  const entry = { id: crypto.randomUUID(), lga: String(lga), phone: clean, created_at: now };
+  db.prepare('INSERT INTO waitlist (id, lga, phone, created_at) VALUES (?, ?, ?, ?)').run(entry.id, entry.lga, entry.phone, now);
+  res.status(201).json({ waitlist: entry, note: 'pilot covers Eti-Osa + Ikeja only for now' });
+});
+
+app.get('/api/v1/admin/waitlist', auth, requireAdmin, (_req: any, res) => {
+  res.json({ waitlist: db.prepare('SELECT * FROM waitlist ORDER BY created_at DESC LIMIT 200').all() });
+});
+
+// --- Ops readiness: counts + mocked-gateway reconciliation (endpoints only, no SDKs) ---
+app.get('/api/v1/admin/ops', auth, requireAdmin, (_req: any, res) => {
+  const q = (sql: string) => db.prepare(sql).all() as any[];
+  const bookingsByStatus = q('SELECT status, COUNT(*) as n FROM bookings GROUP BY status');
+  const paymentsByStatus = q('SELECT status, COUNT(*) as n FROM payments GROUP BY status');
+  const held = q("SELECT booking_id, amount_ngn FROM payments WHERE status='held'");
+  const mismatches: any[] = [];
+  for (const p of held) {
+    const b = db.prepare('SELECT status FROM bookings WHERE id=?').get(p.booking_id) as any;
+    if (!b || !['searching_vendor', 'offered', 'accepted', 'en_route', 'arrived', 'loading', 'adjustment_pending'].includes(b.status))
+      mismatches.push({ booking_id: p.booking_id, issue: 'held payment on inactive booking', status: b?.status ?? 'missing' });
+  }
+  const splits = q("SELECT booking_id FROM payments WHERE status='split'");
+  for (const s of splits) {
+    const po = db.prepare('SELECT id FROM payouts WHERE booking_id=?').get(s.booking_id);
+    if (!po) mismatches.push({ booking_id: s.booking_id, issue: 'split payment without payout record' });
+  }
+  res.json({
+    bookings_by_status: bookingsByStatus,
+    payments_by_status: paymentsByStatus,
+    open_disputes: (db.prepare("SELECT COUNT(*) as c FROM disputes WHERE status='open'").get() as any).c,
+    waitlist_size: (db.prepare('SELECT COUNT(*) as c FROM waitlist').get() as any).c,
+    reconciliation: { mismatches, ok: mismatches.length === 0 },
+    heartbeat: { min_sec: 30, max_sec: 60 },
+  });
+});
+
+// --- Admin overview ---
 app.get('/api/v1/admin/overview', auth, (req: any, res) => {
   if (req.user.role !== 'admin') return res.status(403).json({ error: 'admin only' });
   const users = (db.prepare('SELECT COUNT(*) as c FROM users').get() as any).c;
@@ -737,5 +1058,5 @@ const PORT = Number(process.env.PORT ?? 4000);
 const isMain = (process.argv[1] ?? '').replace(/\\/g, '/').endsWith('apps/api/src/index.ts')
   || (process.argv[1] ?? '').replace(/\\/g, '/').endsWith('apps/api/dist/index.js');
 if (isMain) {
-  app.listen(PORT, () => console.log(`[api] Phase 3 listening on :${PORT}`));
+  app.listen(PORT, () => console.log(`[api] Phase 5 listening on :${PORT}`));
 }

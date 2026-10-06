@@ -20,33 +20,39 @@ On-demand Lagos marketplace connecting residents/businesses with private waste v
 
 ## How to run it
 
-Prereqs: Node 20+ (tested on 24), PowerShell 5.1+, ports 4000 free. No Docker/Git required for local API.
+Prereqs: Node >=22.5 (CI uses 24; `node:sqlite` needs 22.5+), PowerShell 5.1+, ports 4000–4106 free. No Docker/Git required for local API.
 
 ```powershell
-# API-only (fast, recommended for Phase 0-3):
+# API-only (fast, recommended):
 npm install --workspace=@waste/shared --workspace=apps/api
 npm run build --workspace=@waste/shared
 npm run build --workspace=apps/api
 npm run seed --workspace=apps/api
 npm run dev --workspace=apps/api   # :4000, blocks — run in its own terminal
 # new terminal:
-npm run test --workspace=apps/api  # smoke (:4101) + phase1 (:4102) + phase2 (:4103) + phase3 (:4104)
+npm run test --workspace=apps/api  # smoke (:4101) + phase1 (:4102) + phase2 (:4103) + phase3 (:4104) + phase4 (:4105) + phase5 (:4106)
 
 # Full monorepo (admin + mobile — heavy, Next.js + RN):
-npm install
+npm ci
+npm run build --workspace=@waste/shared
+npm run typecheck --workspaces --if-present
+npm run build --workspaces --if-present
+npm run seed --workspace=apps/api
+npm run test --workspace=apps/api
 ```
 
-Health check: `GET http://127.0.0.1:4000/health` → `{"ok":true,"phase":3}`
+Health check: `GET http://127.0.0.1:4000/health` → `{"ok":true,"phase":5}`
 Catalog: `GET http://127.0.0.1:4000/api/v1/catalog` → 4 categories / 2 LGAs (DB-backed).
-Env: copy `.env.example` to `.env`. For real SMS set `OTP_MODE=termii` + `TERMII_API_KEY`. Never commit real secrets.
+Env: copy `.env.example` to `.env`. For real SMS set `OTP_MODE=termii` + `TERMII_API_KEY`; DPO via `DPO_CONTACT`. Never commit real secrets.
 
-## Status: Phases 0–3 DONE + verified — Next: Phase 4
+## Status: Phases 0–5 DONE + verified
 
 - [x] Phase 0 — Foundation: DONE + verified
 - [x] Phase 1 — Vendor onboarding + Admin console: DONE + verified
 - [x] Phase 2 — Customer booking + payments (mock): DONE + verified
 - [x] Phase 3 — Matching + Tracking + Adjustments: DONE + verified
-- [ ] Phase 4 — Completion, refunds, disputes: NEXT
+- [x] Phase 4 — Completion, refunds, disputes: DONE + verified
+- [x] Phase 5 — Pilot hardening: DONE + verified (see below)
 
 ## Phase 0 status — DONE + verified
 
@@ -76,10 +82,20 @@ Env: copy `.env.example` to `.env`. For real SMS set `OTP_MODE=termii` + `TERMII
 
 - [x] Rolling 60s offer queue: auto-offer on payment, `GET /vendor/jobs/offers` (photo/volume/payout), accept/decline, least-busy-first matching, `POST /admin/matching/expire-due` hook
 - [x] Milestones + tracking: `en-route → arrived` (7-min timer) `→ loading`, `POST /tracking/ping` (window-only), `GET /bookings/:id/location` (customer en_route-only), live `GET /admin/jobs/active`
-- [x] Adjust-quote (no cap): vendor submit → `adjustment_pending`, customer approve (mock re-hold + loading) / reject (back to arrived); booking detail includes masked vendor + adjustment + history
+- [x] Adjust-quote: vendor submit → `adjustment_pending`, customer approve (mock re-hold + loading) / reject (back to arrived); capped at 2x original since Phase 5; booking detail includes masked vendor + adjustment + history
 - [x] App stubs: vendor `OffersScreen` + `backgroundTracking` heartbeat contract, customer `JobTracking`
 - Verified: `shared + api typecheck/build` pass, `smoke.test` 7/7 + `phase1.test` 14/14 + `phase2.test` 12/12 + `phase3.test` 17/17 pass (offer+payout, accept, privacy hidden→visible en_route, ping, arrived+timer, adjust+2000 re-hold, live map).
 
-## Next (Phase 4 — Completion, refunds, disputes)
+## Phase 4 status — DONE + verified
 
-Per implementation plan: complete → split transfer to vendor bank + receipt, cancel rules (>5min, 7-min absent + 3 calls, >30min late, adjustment-reject → ₦3,000 penalty), dispute timeline (photos, pings, adjustments), earnings + transfer status. Exit: all 7.1/7.2 scenarios pass with mocked gateway.
+- [x] Complete: `POST /vendor/jobs/:id/complete` (arrived|loading) → mock split transfer + receipt, idempotent
+- [x] Cancel rules: 7.1 no-show/late → full refund + delay evidence; 7.2 change-mind (5-min grace), absent via `POST /vendor/jobs/:id/no-show` (7min+3calls), adjustment-reject → ₦3,000 fuel fee + vendor payout
+- [x] Disputes + earnings: raise/mine/admin-list, `GET /admin/jobs/:id/timeline`, `POST /admin/disputes/:id/resolve` (refund_vendor|refund_customer|split), `GET /vendor/earnings`
+- Verified: all 7.1/7.2 scenarios pass with mocked gateway.
+
+## Phase 5 status — DONE + verified
+
+- [x] NDPA: `GET /privacy` (version + DPO + retention), `GET /me/export`, `DELETE /me` (PII scrub), `POST /admin/retention/purge` (pings older than 90 days)
+- [x] Fraud guardrails: adjust-quote capped at 2x original, no-show flags max 3/vendor/day, OTP max 5/phone/hour
+- [x] Pilot + ops: `POST /waitlist` (outside-pilot LGAs) + admin list, `GET /admin/ops` (counts + mocked-gateway reconciliation + heartbeat 30/60s), admin `/ops` page, `docs/pilot-release-checklist.md`
+- Verified: `shared + api typecheck/build` pass, all 6 suites ALL PASS from clean DB on Node 24 (smoke + phase1–5).

@@ -39,6 +39,12 @@ export async function requestOtp(phone: string) {
     const lastSent = new Date(existing.last_sent_at).getTime();
     if (Date.now() - lastSent < 30_000) throw new Error('OTP already sent, wait 30s');
   }
+  // Fraud guardrail (Phase 5): max 5 OTP sends per phone per hour.
+  const hourAgo = new Date(now.getTime() - 3600_000).toISOString();
+  const sent = (db.prepare('SELECT COUNT(*) as c FROM otp_sends WHERE phone=? AND sent_at > ?').get(clean, hourAgo) as any).c as number;
+  if (sent >= 5) throw new Error('OTP rate limit: max 5 per hour');
+  db.prepare('INSERT INTO otp_sends (phone, sent_at) VALUES (?, ?)').run(clean, now.toISOString());
+  db.prepare("DELETE FROM otp_sends WHERE sent_at < ?").run(new Date(now.getTime() - 24 * 3600_000).toISOString());
 
   const code = String(crypto.randomInt(100000, 999999));
   const expiresAt = new Date(now.getTime() + OTP_TTL_SEC * 1000).toISOString();
