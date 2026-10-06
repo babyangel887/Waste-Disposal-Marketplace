@@ -99,3 +99,7 @@ Env: copy `.env.example` to `.env`. For real SMS set `OTP_MODE=termii` + `TERMII
 - [x] Fraud guardrails: adjust-quote capped at 2x original, no-show flags max 3/vendor/day, OTP max 5/phone/hour
 - [x] Pilot + ops: `POST /waitlist` (outside-pilot LGAs) + admin list, `GET /admin/ops` (counts + mocked-gateway reconciliation + heartbeat 30/60s), admin `/ops` page, `docs/pilot-release-checklist.md`
 - Verified: `shared + api typecheck/build` pass, all 6 suites ALL PASS from clean DB on Node 24 (smoke + phase1–5).
+
+## Release checklist
+
+See `docs/pilot-release-checklist.md` — backend, mobile (bare workflow), admin dashboard live, and compliance gates for TestFlight / Play Internal.
