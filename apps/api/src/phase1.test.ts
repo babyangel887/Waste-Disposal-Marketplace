@@ -1,6 +1,7 @@
 process.env.JWT_SECRET = 'test-secret-min-32-chars-xxxxxxxx';
 process.env.OTP_MODE = 'mock';
 import { app } from './index.js';
+import { ensureSeedAdmin } from './test-setup.js';
 
 const base = 'http://127.0.0.1:4102';
 const server = app.listen(4102, async () => {
@@ -53,7 +54,8 @@ const server = app.listen(4102, async () => {
     const prof = await get('/api/v1/vendor/me/profile', vtok);
     assert((prof.j as any).profile.approved_status === 'pending', 'vendor profile pending');
 
-    // admin login via seeded admin (OTP mock)
+    // admin login via seeded admin (OTP mock; ensured locally for fresh DBs)
+    ensureSeedAdmin();
     const aphone = '+2348000000001';
     const ao: any = await post('/api/v1/auth/request-otp', { phone: aphone });
     const av: any = await post('/api/v1/auth/verify-otp', { phone: aphone, code: (ao.j as any)._devCode });
@@ -62,6 +64,7 @@ const server = app.listen(4102, async () => {
 
     // admin queue sees pending vendor
     const q = await get('/api/v1/admin/vendors?status=pending', atok);
+    assert(Array.isArray((q.j as any).vendors), 'admin queue returns vendors list');
     assert((q.j as any).vendors.some((x: any) => x.id === vendorId), 'admin queue lists vendor');
 
     // approve

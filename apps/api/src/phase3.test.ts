@@ -1,6 +1,7 @@
 process.env.JWT_SECRET = 'test-secret-min-32-chars-xxxxxxxx';
 process.env.OTP_MODE = 'mock';
 import { app } from './index.js';
+import { ensureSeedAdmin } from './test-setup.js';
 
 const base = 'http://127.0.0.1:4104';
 const server = app.listen(4104, async () => {
@@ -35,6 +36,7 @@ const server = app.listen(4104, async () => {
       business_name: 'Phase3 Trucks', vehicle: { plate_no: 'P3-001', type: 'tipper' },
       documents: { vehicle_reg: 'd1', drivers_license: 'd2', business_doc: 'd3' },
     }, vtok);
+    ensureSeedAdmin();
     const atok = await otpLogin('+2348000000001');
     const ap = await post(`/api/v1/admin/vendors/${vendorId}/approve`, {}, atok);
     assert(ap.j.status === 'approved', 'vendor approved');
@@ -51,6 +53,7 @@ const server = app.listen(4104, async () => {
 
     // vendor offer → accept
     const offers = await get('/api/v1/vendor/jobs/offers', vtok);
+    assert(Array.isArray((offers.j as any).offers), 'offers list returned');
     const mine = (offers.j.offers as any[]).find((o) => o.booking?.id === bid);
     assert(!!mine, 'rolling offer received with payout');
     assert(mine.payout_ngn === b.j.booking.total_price, 'offer shows volume + payout');
