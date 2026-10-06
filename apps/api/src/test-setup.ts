@@ -16,3 +16,11 @@ export function ensureSeedAdmin() {
     db.prepare('UPDATE users SET role=?, active=? WHERE phone=?').run('admin', 1, adminPhone);
   }
 }
+
+// Test isolation for the rolling offer queue: offers are transient and the
+// matcher routes least-busy-first, so stale offers from earlier runs/suites
+// would steal routing. Clearing makes each test's vendor deterministic
+// (all vendors at 0 offers → newest vendor wins the tie-break).
+export function clearOffers() {
+  db.prepare('DELETE FROM job_offers').run();
+}
