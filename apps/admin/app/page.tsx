@@ -14,12 +14,12 @@ export default function Home() {
   }
   return (
     <main style={{ padding: 24 }}>
-      <h1>Waste Marketplace — Admin (Phase 0)</h1>
-      <p>Pilot: Eti-Osa, Ikeja. Vendor approvals + pricing console land in Phase 1.</p>
+      <h1>Waste Marketplace - Admin</h1>
+      <p>Phase 5 (pilot hardening). Pilot: Eti-Osa, Ikeja.</p>
       <input id="token" placeholder="paste admin JWT" style={{ width: 400 }} />
       <button onClick={check}>Check overview</button>
       <pre>{out}</pre>
-      <p><a href="/privacy">Privacy Policy</a> · <a href="/login">Login</a></p>
+      <p><a href="/login">Login</a> · <a href="/privacy">Privacy Policy</a> · <a href="/ops">Ops</a> · <a href="/vendors">Vendors</a> · <a href="/pricing">Pricing</a> · <a href="/jobs">Jobs</a></p>
     </main>
   );
 }
