@@ -1,0 +1,21 @@
+{
+  "name": "waste-marketplace",
+  "version": "0.1.0",
+  "private": true,
+  "engines": {
+    "node": ">=22.5"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:api": "npm run dev --workspace=apps/api",
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test:api": "npm run test --workspace=apps/api"
+  },
+  "devDependencies": {
+    "turbo": "^2.11.7"
+  }
+}

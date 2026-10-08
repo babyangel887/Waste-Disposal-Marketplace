@@ -1,0 +1,31 @@
+services:
+  postgres:
+    image: postgis/postgis:15-3.4
+    environment:
+      POSTGRES_USER: waste
+      POSTGRES_PASSWORD: waste
+      POSTGRES_DB: waste_marketplace
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  api:
+    build: ./apps/api
+    environment:
+      DATABASE_URL: postgres://waste:waste@postgres:5432/waste_marketplace
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: ${JWT_SECRET}
+    ports:
+      - "4000:4000"
+    depends_on:
+      - postgres
+      - redis
+
+volumes:
+  pgdata:
