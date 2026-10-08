@@ -55,7 +55,7 @@ const server = app.listen(4102, async () => {
     assert((prof.j as any).profile.approved_status === 'pending', 'vendor profile pending');
 
     // admin login via seeded admin (OTP mock; ensured locally for fresh DBs)
-    ensureSeedAdmin();
+    await ensureSeedAdmin();
     const aphone = '+2348000000001';
     const ao: any = await post('/api/v1/auth/request-otp', { phone: aphone });
     const av: any = await post('/api/v1/auth/verify-otp', { phone: aphone, code: (ao.j as any)._devCode });

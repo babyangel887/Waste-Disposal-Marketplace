@@ -1,6 +1,6 @@
 'use client';
 import { useState } from 'react';
-const API = 'http://localhost:4000';
+const API = `${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000'}`;
 // Phase 5: ops readiness — counts + mocked-gateway reconciliation + waitlist size.
 export default function Ops() {
   const [token, setToken] = useState('');

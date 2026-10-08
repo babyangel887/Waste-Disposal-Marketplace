@@ -1,6 +1,6 @@
 'use client';
 import { useState } from 'react';
-const API = 'http://localhost:4000';
+const API = `${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000'}`;
 // Phase 1: vendor queue approve/reject/block. Seed-admin JWT required.
 export default function Vendors() {
   const [token, setToken] = useState('');

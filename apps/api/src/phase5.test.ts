@@ -2,7 +2,7 @@ process.env.JWT_SECRET = 'test-secret-min-32-chars-xxxxxxxx';
 process.env.OTP_MODE = 'mock';
 import { app } from './index.js';
 import { ensureSeedAdmin, clearOffers } from './test-setup.js';
-import { db } from './db.js';
+import { run } from './db.js';
 
 const base = 'http://127.0.0.1:4106';
 const server = app.listen(4106, async () => {
@@ -31,7 +31,7 @@ const server = app.listen(4106, async () => {
       return { token: v.j.access_token as string, id: v.j.user.id as string };
     };
     const R = () => String(Math.floor(Math.random() * 9000) + 1000);
-    ensureSeedAdmin();
+    await ensureSeedAdmin();
 
     // privacy info + export
     const priv = await get('/api/v1/privacy');
@@ -50,7 +50,7 @@ const server = app.listen(4106, async () => {
     await post(`/api/v1/admin/vendors/${v.id}/approve`, {}, a.token);
 
     async function arrivedBooking() {
-      clearOffers();
+      await clearOffers();
       const b = await post('/api/v1/bookings', {
         category_slug: 'bagged', qty: 1, lga: 'Ikeja',
         pickup_lat: 6.45, pickup_lng: 3.39, pickup_address: 'P5', photo_keys: ['waste_photo/p5'],
@@ -69,7 +69,7 @@ const server = app.listen(4106, async () => {
     // retention purge deletes 100-day-old ping
     let t = await arrivedBooking();
     await post('/api/v1/tracking/ping', { booking_id: t.bid, lat: 6.45, lng: 3.39 }, v.token);
-    db.prepare("UPDATE location_pings SET recorded_at=? WHERE booking_id=?").run(
+    await run("UPDATE location_pings SET recorded_at=? WHERE booking_id=?",
       new Date(Date.now() - 100 * 24 * 3600 * 1000).toISOString(), t.bid);
     const purge = await post('/api/v1/admin/retention/purge', {}, a.token);
     assert(purge.j.deleted_pings >= 1, '90-day retention purge deletes old pings');
@@ -96,7 +96,7 @@ const server = app.listen(4106, async () => {
     for (let i = 0; i < 5; i++) {
       const o: any = await post('/api/v1/auth/request-otp', { phone: p6 });
       assert(!!(o.j as any)._devCode, `otp ${i + 1}/5 sent`);
-      db.prepare('DELETE FROM otp_codes WHERE phone=?').run(p6);
+      await run('DELETE FROM otp_codes WHERE phone=?', p6);
     }
     const o6: any = await post('/api/v1/auth/request-otp', { phone: p6 });
     assert(o6.status === 429, '6th OTP rejected (5/hour)');

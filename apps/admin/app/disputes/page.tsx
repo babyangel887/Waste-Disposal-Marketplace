@@ -1,6 +1,6 @@
 'use client';
 import { useState } from 'react';
-const API = 'http://localhost:4000';
+const API = `${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000'}`;
 // Phase 4: dispute queue + timeline + resolve (refund_vendor|refund_customer|split).
 export default function Disputes() {
   const [token, setToken] = useState('');

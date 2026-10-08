@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { db } from './db.js';
+import { get, run } from './db.js';
 
 const OTP_TTL_SEC = Number(process.env.OTP_TTL_SEC ?? 300);
 
@@ -40,44 +40,45 @@ export async function requestOtp(phone: string) {
   if (!/^\+?[0-9]{7,15}$/.test(clean)) throw new Error('invalid phone format');
 
   const now = new Date();
-  const existing = db.prepare('SELECT * FROM otp_codes WHERE phone = ?').get(clean) as any;
+  const existing = (await get('SELECT * FROM otp_codes WHERE phone = ?', clean)) as any;
   if (existing) {
     const lastSent = new Date(existing.last_sent_at).getTime();
     if (Date.now() - lastSent < 30_000) throw new Error('OTP already sent, wait 30s');
   }
   // Fraud guardrail (Phase 5): max 5 OTP sends per phone per hour.
   const hourAgo = new Date(now.getTime() - 3600_000).toISOString();
-  const sent = (db.prepare('SELECT COUNT(*) as c FROM otp_sends WHERE phone=? AND sent_at > ?').get(clean, hourAgo) as any).c as number;
+  const sent = Number(((await get('SELECT COUNT(*) as c FROM otp_sends WHERE phone=? AND sent_at > ?', clean, hourAgo)) as any).c);
   if (sent >= 5) throw new Error('OTP rate limit: max 5 per hour');
-  db.prepare('INSERT INTO otp_sends (phone, sent_at) VALUES (?, ?)').run(clean, now.toISOString());
-  db.prepare("DELETE FROM otp_sends WHERE sent_at < ?").run(new Date(now.getTime() - 24 * 3600_000).toISOString());
+  await run('INSERT INTO otp_sends (phone, sent_at) VALUES (?, ?)', clean, now.toISOString());
+  await run('DELETE FROM otp_sends WHERE sent_at < ?', new Date(now.getTime() - 24 * 3600_000).toISOString());
 
   const code = String(crypto.randomInt(100000, 999999));
   const expiresAt = new Date(now.getTime() + OTP_TTL_SEC * 1000).toISOString();
-  db.prepare(
+  await run(
     `INSERT INTO otp_codes (phone, code_hash, expires_at, attempts, last_sent_at)
      VALUES (?, ?, ?, 0, ?)
-     ON CONFLICT(phone) DO UPDATE SET code_hash=excluded.code_hash, expires_at=excluded.expires_at, attempts=0, last_sent_at=excluded.last_sent_at`
-  ).run(clean, hash(code, clean), expiresAt, now.toISOString());
+     ON CONFLICT(phone) DO UPDATE SET code_hash=excluded.code_hash, expires_at=excluded.expires_at, attempts=0, last_sent_at=excluded.last_sent_at`,
+    clean, hash(code, clean), expiresAt, now.toISOString()
+  );
 
   const mode = process.env.OTP_MODE ?? 'mock';
   if (mode === 'termii') await sendViaTermii(clean, code);
   else console.log(`[otp mock] ${clean} -> ${code}`);
 
-  // In mock mode return code so Phase 0 can be tested without SMS. Never do this in prod.
+  // In mock mode return code so tests run without SMS. Never do this in prod.
   return mode === 'mock' ? { expiresIn: OTP_TTL_SEC, _devCode: code } : { expiresIn: OTP_TTL_SEC };
 }
 
-export function verifyOtp(phone: string, code: string) {
+export async function verifyOtp(phone: string, code: string) {
   const clean = phone.replace(/\s/g, '');
-  const row = db.prepare('SELECT * FROM otp_codes WHERE phone = ?').get(clean) as any;
+  const row = (await get('SELECT * FROM otp_codes WHERE phone = ?', clean)) as any;
   if (!row) throw new Error('no OTP requested for this phone');
   if (new Date(row.expires_at).getTime() < Date.now()) throw new Error('OTP expired');
   if (row.attempts >= 5) throw new Error('too many attempts, request a new code');
   if (row.code_hash !== hash(code, clean)) {
-    db.prepare('UPDATE otp_codes SET attempts = attempts + 1 WHERE phone = ?').run(clean);
+    await run('UPDATE otp_codes SET attempts = attempts + 1 WHERE phone = ?', clean);
     throw new Error('invalid code');
   }
-  db.prepare('DELETE FROM otp_codes WHERE phone = ?').run(clean);
+  await run('DELETE FROM otp_codes WHERE phone = ?', clean);
   return true;
 }

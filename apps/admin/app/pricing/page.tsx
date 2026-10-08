@@ -1,6 +1,6 @@
 'use client';
 import { useState } from 'react';
-const API = 'http://localhost:4000';
+const API = `${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000'}`;
 // Phase 1: DB-backed pricing console. Edits change /bookings/estimate immediately.
 export default function Pricing() {
   const [token, setToken] = useState('');

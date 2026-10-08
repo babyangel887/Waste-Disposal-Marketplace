@@ -26,7 +26,7 @@ const server = app.listen(4105, async () => {
       return { token: v.j.access_token as string, id: v.j.user.id as string };
     };
     const R = () => String(Math.floor(Math.random() * 9000) + 1000);
-    ensureSeedAdmin();
+    await ensureSeedAdmin();
 
     const c = await otpLogin('+234740000' + R(), 'customer');
     const v = await otpLogin('+234741000' + R(), 'vendor');
@@ -38,7 +38,7 @@ const server = app.listen(4105, async () => {
     await post(`/api/v1/admin/vendors/${v.id}/approve`, {}, a.token);
 
     async function paidBooking(total?: number) {
-      clearOffers(); // deterministic routing: newest vendor (ours) wins the tie-break
+      await clearOffers(); // deterministic routing: newest vendor (ours) wins the tie-break
       const b = await post('/api/v1/bookings', {
         category_slug: 'bagged', qty: 2, lga: 'Ikeja',
         pickup_lat: 6.45, pickup_lng: 3.39, pickup_address: 'P4 addr', photo_keys: ['waste_photo/p4'],

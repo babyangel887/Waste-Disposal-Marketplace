@@ -36,7 +36,7 @@ const server = app.listen(4104, async () => {
       business_name: 'Phase3 Trucks', vehicle: { plate_no: 'P3-001', type: 'tipper' },
       documents: { vehicle_reg: 'd1', drivers_license: 'd2', business_doc: 'd3' },
     }, vtok);
-    ensureSeedAdmin();
+    await ensureSeedAdmin();
     const atok = await otpLogin('+2348000000001');
     const ap = await post(`/api/v1/admin/vendors/${vendorId}/approve`, {}, atok);
     assert(ap.j.status === 'approved', 'vendor approved');
