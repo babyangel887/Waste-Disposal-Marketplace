@@ -1,20 +1,23 @@
 {
   "expo": {
     "name": "Waste Customer",
+    "owner": "babyangel887",
     "slug": "waste-customer",
     "version": "1.0.0",
     "orientation": "portrait",
     "scheme": "waste-customer",
-    "platforms": ["android"],
+    "platforms": [
+      "android"
+    ],
     "android": {
       "package": "com.wastedisposal.customer",
       "versionCode": 1,
       "permissions": [
-        "ACCESS_COARSE_LOCATION",
-        "ACCESS_FINE_LOCATION",
-        "CAMERA",
-        "READ_EXTERNAL_STORAGE",
-        "READ_MEDIA_IMAGES"
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.CAMERA",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.READ_MEDIA_IMAGES"
       ]
     },
     "plugins": [
@@ -29,7 +32,14 @@
         {
           "photosPermission": "Allow waste photos for pickup booking."
         }
-      ]
-    ]
+      ],
+      "expo-asset",
+      "expo-font"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "b54116f7-38e5-4831-9569-4446172e86d5"
+      }
+    }
   }
 }

@@ -10,7 +10,7 @@
   "dependencies": {
     "@waste/shared": "0.1.0",
     "react": "18.3.1",
-    "react-native": "0.75.2"
+    "react-native": "0.76.9"
   },
   "devDependencies": {
     "typescript": "^5.6.2",
