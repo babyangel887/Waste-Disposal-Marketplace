@@ -14,5 +14,8 @@
     "build": "npm run build --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test:api": "npm run test --workspace=apps/api"
+  },
+  "devDependencies": {
+    "turbo": "^2.0.0"
   }
 }
