@@ -1,0 +1,35 @@
+{
+  "expo": {
+    "name": "Waste Customer",
+    "slug": "waste-customer",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "waste-customer",
+    "platforms": ["android"],
+    "android": {
+      "package": "com.wastedisposal.customer",
+      "versionCode": 1,
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION",
+        "CAMERA",
+        "READ_EXTERNAL_STORAGE",
+        "READ_MEDIA_IMAGES"
+      ]
+    },
+    "plugins": [
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Allow waste pickup location for driver arrival."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow waste photos for pickup booking."
+        }
+      ]
+    ]
+  }
+}

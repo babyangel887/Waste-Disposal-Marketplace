@@ -1,43 +1,73 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, Button } from 'react-native';
+import { View, Text, TextInput, Button, ActivityIndicator } from 'react-native';
+import { API_BASE } from '../api';
+import { theme } from '../theme';
 
-// Shared OTP logic used by customer + vendor (role prop differs).
-export function OtpScreen({ apiBase, role = 'customer', onToken }: { apiBase: string; role?: string; onToken: (t: string) => void }) {
+// Same API calls as before: request-otp -> verify-otp (role=customer) -> consent.
+export function OtpScreen({ onToken }: { onToken: (t: string) => void }) {
   const [phone, setPhone] = useState('+234');
   const [code, setCode] = useState('');
   const [msg, setMsg] = useState('');
+  const [busy, setBusy] = useState(false);
 
   async function request() {
-    const r = await fetch(`${apiBase}/api/v1/auth/request-otp`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ phone }),
-    }).then((x) => x.json());
-    setMsg(JSON.stringify(r));
-  }
-  async function verify() {
-    const r: any = await fetch(`${apiBase}/api/v1/auth/verify-otp`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ phone, code, role }),
-    }).then((x) => x.json());
-    setMsg(JSON.stringify(r));
-    if (r.access_token) {
-      // NDPA consent immediately after signup (PRD §5.1)
-      await fetch(`${apiBase}/api/v1/auth/consent`, {
+    setBusy(true);
+    setMsg('');
+    try {
+      const r = await fetch(`${API_BASE}/api/v1/auth/request-otp`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${r.access_token}` },
-        body: JSON.stringify({ consent_type: 'privacy_policy', version: 'v1.0-phase0' }),
-      });
-      onToken(r.access_token);
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone }),
+      }).then((x) => x.json());
+      setMsg(JSON.stringify(r));
+    } catch (e: any) {
+      setMsg('request failed: ' + String(e?.message ?? e));
+    } finally {
+      setBusy(false);
     }
   }
+
+  async function verify() {
+    setBusy(true);
+    setMsg('');
+    try {
+      const r: any = await fetch(`${API_BASE}/api/v1/auth/verify-otp`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone, code, role: 'customer' }),
+      }).then((x) => x.json());
+      if (r.access_token) {
+        // NDPA consent immediately after signup (PRD §5.1) — kept from skeleton.
+        await fetch(`${API_BASE}/api/v1/auth/consent`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${r.access_token}` },
+          body: JSON.stringify({ consent_type: 'privacy_policy', version: 'v1.0-phase0' }),
+        });
+        onToken(r.access_token);
+        return;
+      }
+      setMsg(JSON.stringify(r));
+    } catch (e: any) {
+      setMsg('verify failed: ' + String(e?.message ?? e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
-    <View>
-      <Text>Login ({role}) — Phase 0</Text>
-      <TextInput value={phone} onChangeText={setPhone} placeholder="+234..." />
-      <Button title="Send code" onPress={request} />
-      <TextInput value={code} onChangeText={setCode} placeholder="123456" />
-      <Button title="Verify" onPress={verify} />
-      <Text>{msg}</Text>
+    <View style={theme.card}>
+      <Text style={theme.title}>Login</Text>
+      <Text style={theme.subtitle}>OTP login as customer</Text>
+      <Text style={theme.label}>Phone</Text>
+      <TextInput value={phone} onChangeText={setPhone} placeholder="+234..." style={theme.input} keyboardType="phone-pad" />
+      <View style={theme.navButton} />
+      <Button title="Send code" onPress={request} disabled={busy} />
+      <Text style={theme.label}>Code</Text>
+      <TextInput value={code} onChangeText={setCode} placeholder="123456" style={theme.input} keyboardType="number-pad" />
+      <View style={theme.navButton} />
+      <Button title="Verify" onPress={verify} disabled={busy} />
+      {busy ? <ActivityIndicator style={{ marginTop: 12 }} /> : null}
+      {!!msg && <Text style={theme.msg}>{msg}</Text>}
     </View>
   );
 }
