@@ -6,14 +6,14 @@ export default function Login() {
   const [code, setCode] = useState('');
   const [msg, setMsg] = useState('');
   async function request() {
-    const r = await fetch('http://localhost:4000/api/v1/auth/request-otp', {
+    const r = await fetch(`${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000'}/api/v1/auth/request-otp`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ phone }),
     }).then((x) => x.json());
     setMsg(JSON.stringify(r));
   }
   async function verify() {
-    const r = await fetch('http://localhost:4000/api/v1/auth/verify-otp', {
+    const r = await fetch(`${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000'}/api/v1/auth/verify-otp`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ phone, code, role: 'admin' }),
     }).then((x) => x.json());
