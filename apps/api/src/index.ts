@@ -390,8 +390,7 @@ app.post('/api/v1/bookings/:id/cancel', auth, ah(async (req: any, res: any) => {
 }));
 
 // Vendor flags customer absent: arrived + waited 7 min + 3 calls → customer-fault cancel.
-app.post('/api/v1/vendor/jobs/:id/no-show', auth, ah(async (req: any, res: any) => {
-  if (req.user.role !== 'vendor') return res.status(403).json({ error: 'vendor role required' });
+app.post('/api/v1/vendor/jobs/:id/no-show', auth, ah(requireApprovedVendor), ah(async (req: any, res: any) => {
   const r = (await requireBookingVendor(req.params.id, req.user.sub)) as any;
   if (r.error) return res.status(r.status).json({ error: r.error });
   if (r.booking.status !== 'arrived') return res.status(409).json({ error: `must be arrived, is ${r.booking.status}` });
@@ -524,8 +523,7 @@ async function expireDueOffers() {
   return due.length;
 }
 
-app.get('/api/v1/vendor/jobs/offers', auth, ah(async (req: any, res: any) => {
-  if (req.user.role !== 'vendor') return res.status(403).json({ error: 'vendor role required' });
+app.get('/api/v1/vendor/jobs/offers', auth, ah(requireApprovedVendor), ah(async (req: any, res: any) => {
   await expireDueOffers();
   const offers = (await all(
     "SELECT * FROM job_offers WHERE vendor_id=? AND status='pending' AND expires_at > ? ORDER BY created_at DESC",
@@ -537,8 +535,7 @@ app.get('/api/v1/vendor/jobs/offers', auth, ah(async (req: any, res: any) => {
   res.json({ offers: enriched });
 }));
 
-app.post('/api/v1/vendor/offers/:id/accept', auth, ah(async (req: any, res: any) => {
-  if (req.user.role !== 'vendor') return res.status(403).json({ error: 'vendor role required' });
+app.post('/api/v1/vendor/offers/:id/accept', auth, ah(requireApprovedVendor), ah(async (req: any, res: any) => {
   await expireDueOffers();
   const offer = (await get('SELECT * FROM job_offers WHERE id = ?', req.params.id)) as any;
   if (!offer) return res.status(404).json({ error: 'offer not found' });
@@ -556,8 +553,7 @@ app.post('/api/v1/vendor/offers/:id/accept', auth, ah(async (req: any, res: any)
   res.json({ ok: true, booking_id: offer.booking_id, status: 'accepted' });
 }));
 
-app.post('/api/v1/vendor/offers/:id/decline', auth, ah(async (req: any, res: any) => {
-  if (req.user.role !== 'vendor') return res.status(403).json({ error: 'vendor role required' });
+app.post('/api/v1/vendor/offers/:id/decline', auth, ah(requireApprovedVendor), ah(async (req: any, res: any) => {
   const offer = (await get('SELECT * FROM job_offers WHERE id = ?', req.params.id)) as any;
   if (!offer) return res.status(404).json({ error: 'offer not found' });
   if (offer.vendor_id !== req.user.sub) return res.status(403).json({ error: 'not your offer' });
@@ -678,6 +674,18 @@ app.get('/api/v1/vendor/me/profile', auth, ah(async (req: any, res: any) => {
   const docs = await all('SELECT type, file_key, verified FROM vendor_documents WHERE vendor_id = ?', req.user.sub);
   res.json({ profile, vehicle, documents: docs });
 }));
+
+// --- Vendor approval gate: onboarding + own profile stay open so vendors can
+// get approved and check their status; every job/offer/payout route requires
+// approved_status === 'approved', even with a valid token. ---
+async function requireApprovedVendor(req: any, res: any, next: any) {
+  if (req.user.role !== 'vendor') return res.status(403).json({ error: 'vendor role required' });
+  const profile = (await get('SELECT * FROM vendor_profiles WHERE user_id = ?', req.user.sub)) as any;
+  if (!profile || profile.approved_status !== 'approved') {
+    return res.status(403).json({ error: 'vendor approval pending' });
+  }
+  next();
+}
 
 // --- Admin: vendor queue + block/unblock + audit (Phase 1, seed admin only) ---
 async function requireAdmin(req: any, res: any, next: any) {
@@ -831,8 +839,7 @@ async function requireBookingVendor(bookingId: string, vendorId: string) {
   return { booking: b };
 }
 
-app.post('/api/v1/vendor/jobs/:id/en-route', auth, ah(async (req: any, res: any) => {
-  if (req.user.role !== 'vendor') return res.status(403).json({ error: 'vendor role required' });
+app.post('/api/v1/vendor/jobs/:id/en-route', auth, ah(requireApprovedVendor), ah(async (req: any, res: any) => {
   const r = (await requireBookingVendor(req.params.id, req.user.sub)) as any;
   if (r.error) return res.status(r.status).json({ error: r.error });
   if (r.booking.status !== 'accepted') return res.status(409).json({ error: `must be accepted, is ${r.booking.status}` });
@@ -842,8 +849,7 @@ app.post('/api/v1/vendor/jobs/:id/en-route', auth, ah(async (req: any, res: any)
   res.json({ ok: true, status: 'en_route' });
 }));
 
-app.post('/api/v1/vendor/jobs/:id/arrived', auth, ah(async (req: any, res: any) => {
-  if (req.user.role !== 'vendor') return res.status(403).json({ error: 'vendor role required' });
+app.post('/api/v1/vendor/jobs/:id/arrived', auth, ah(requireApprovedVendor), ah(async (req: any, res: any) => {
   const r = (await requireBookingVendor(req.params.id, req.user.sub)) as any;
   if (r.error) return res.status(r.status).json({ error: r.error });
   if (r.booking.status !== 'en_route') return res.status(409).json({ error: `must be en_route, is ${r.booking.status}` });
@@ -855,8 +861,7 @@ app.post('/api/v1/vendor/jobs/:id/arrived', auth, ah(async (req: any, res: any) 
   res.json({ ok: true, status: 'arrived', arrived_at: now, wait_secs: 7 * 60 });
 }));
 
-app.post('/api/v1/vendor/jobs/:id/loading', auth, ah(async (req: any, res: any) => {
-  if (req.user.role !== 'vendor') return res.status(403).json({ error: 'vendor role required' });
+app.post('/api/v1/vendor/jobs/:id/loading', auth, ah(requireApprovedVendor), ah(async (req: any, res: any) => {
   const r = (await requireBookingVendor(req.params.id, req.user.sub)) as any;
   if (r.error) return res.status(r.status).json({ error: r.error });
   if (r.booking.status !== 'arrived') return res.status(409).json({ error: `must be arrived, is ${r.booking.status}` });
@@ -865,8 +870,7 @@ app.post('/api/v1/vendor/jobs/:id/loading', auth, ah(async (req: any, res: any) 
 }));
 
 // --- Completion + mock split transfer (Phase 4; licensed provider in prod) ---
-app.post('/api/v1/vendor/jobs/:id/complete', auth, ah(async (req: any, res: any) => {
-  if (req.user.role !== 'vendor') return res.status(403).json({ error: 'vendor role required' });
+app.post('/api/v1/vendor/jobs/:id/complete', auth, ah(requireApprovedVendor), ah(async (req: any, res: any) => {
   const r = (await requireBookingVendor(req.params.id, req.user.sub)) as any;
   if (r.error) return res.status(r.status).json({ error: r.error });
   if (r.booking.status === 'completed') {
@@ -903,8 +907,7 @@ app.post('/api/v1/vendor/jobs/:id/complete', auth, ah(async (req: any, res: any)
 }));
 
 // --- Adjust-quote (Phase 3; capped at 2x since Phase 5) ---
-app.post('/api/v1/vendor/jobs/:id/adjust-quote', auth, ah(async (req: any, res: any) => {
-  if (req.user.role !== 'vendor') return res.status(403).json({ error: 'vendor role required' });
+app.post('/api/v1/vendor/jobs/:id/adjust-quote', auth, ah(requireApprovedVendor), ah(async (req: any, res: any) => {
   const r = (await requireBookingVendor(req.params.id, req.user.sub)) as any;
   if (r.error) return res.status(r.status).json({ error: r.error });
   if (!['arrived', 'loading'].includes(r.booking.status))
@@ -963,8 +966,7 @@ app.post('/api/v1/bookings/:id/adjustments/:adjId/reject', auth, ah(async (req: 
 }));
 
 // --- Heartbeat tracking (Phase 3 mock; window-only, no 30s reject) ---
-app.post('/api/v1/tracking/ping', auth, ah(async (req: any, res: any) => {
-  if (req.user.role !== 'vendor') return res.status(403).json({ error: 'vendor role required' });
+app.post('/api/v1/tracking/ping', auth, ah(requireApprovedVendor), ah(async (req: any, res: any) => {
   const { booking_id, lat, lng, accuracy } = req.body ?? {};
   const booking = (await get('SELECT * FROM bookings WHERE id = ?', String(booking_id))) as any;
   if (!booking) return res.status(404).json({ error: 'booking not found' });
@@ -1107,8 +1109,7 @@ app.post('/api/v1/admin/disputes/:id/resolve', auth, ah(requireAdmin), ah(async 
 }));
 
 // --- Vendor earnings (Phase 4 mock transfers) ---
-app.get('/api/v1/vendor/earnings', auth, ah(async (req: any, res: any) => {
-  if (req.user.role !== 'vendor') return res.status(403).json({ error: 'vendor role required' });
+app.get('/api/v1/vendor/earnings', auth, ah(requireApprovedVendor), ah(async (req: any, res: any) => {
   const transfers = (await all('SELECT * FROM payouts WHERE vendor_id=? ORDER BY created_at DESC', req.user.sub)) as any[];
   const completed = transfers.filter((t) => t.status === 'completed').reduce((s: number, t: any) => s + t.amount_ngn, 0);
   const active = Number(((await get("SELECT COUNT(*) as c FROM bookings WHERE vendor_id=? AND status IN ('accepted','en_route','arrived','loading','adjustment_pending')", req.user.sub)) as any).c);
