@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS users (
   phone TEXT NOT NULL UNIQUE,
   phone_verified BOOLEAN NOT NULL DEFAULT FALSE,
   name TEXT,
+  password_hash TEXT,
   active BOOLEAN NOT NULL DEFAULT TRUE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );

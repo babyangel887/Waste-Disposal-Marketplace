@@ -6,6 +6,7 @@ import cors from 'cors';
 import crypto from 'node:crypto';
 import { get, all, run } from './db.js';
 import { requestOtp, verifyOtp } from './otp.js';
+import { verifyPassword } from './password.js';
 import { signAccess, signRefresh, verifyToken } from './jwt.js';
 import { estimatePrice, PILOT_LGAS, WASTE_CATEGORIES, PRIVACY_POLICY_VERSION } from '@waste/shared';
 
@@ -68,6 +69,27 @@ app.post('/api/v1/auth/verify-otp', ah(async (req: any, res: any) => {
   } catch (e: any) {
     res.status(400).json({ error: e.message });
   }
+}));
+
+// --- Admin password login (seeded admins only; OTP stays for everyone else) ---
+app.post('/api/v1/auth/admin-login', ah(async (req: any, res: any) => {
+  const { phone, password } = req.body ?? {};
+  if (!phone || !password) return res.status(400).json({ error: 'phone + password required' });
+  const cleanPhone = String(phone).replace(/\s/g, '');
+  const user = (await get('SELECT * FROM users WHERE phone = ?', cleanPhone)) as any;
+  // Generic error so callers cannot probe which phones exist.
+  if (!user || user.role !== 'admin' || user.active === 0) {
+    return res.status(401).json({ error: 'invalid credentials' });
+  }
+  if (!verifyPassword(String(password), user.password_hash)) {
+    return res.status(401).json({ error: 'invalid credentials' });
+  }
+  const payload = { sub: user.id, role: user.role, phone: user.phone };
+  res.json({
+    access_token: signAccess(payload),
+    refresh_token: signRefresh(payload),
+    user: { id: user.id, role: user.role, phone: user.phone, name: user.name },
+  });
 }));
 
 function auth(req: any, res: any, next: any) {

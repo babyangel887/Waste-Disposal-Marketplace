@@ -43,6 +43,7 @@ const DDL = [
     phone TEXT NOT NULL UNIQUE,
     phone_verified BOOLEAN NOT NULL DEFAULT FALSE,
     name TEXT,
+    password_hash TEXT,
     active BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TEXT NOT NULL
   )`,
@@ -261,11 +262,14 @@ async function init(): Promise<void> {
     const cols = (sqlite.prepare('PRAGMA table_info(bookings)').all() as any[]).map((c) => c.name);
     if (!cols.includes('vendor_id')) sqlite.exec('ALTER TABLE bookings ADD COLUMN vendor_id TEXT');
     if (!cols.includes('arrived_at')) sqlite.exec('ALTER TABLE bookings ADD COLUMN arrived_at TEXT');
+    const ucols = (sqlite.prepare('PRAGMA table_info(users)').all() as any[]).map((c) => c.name);
+    if (!ucols.includes('password_hash')) sqlite.exec('ALTER TABLE users ADD COLUMN password_hash TEXT');
   } else {
     pool = new Pool({ connectionString: DATABASE_URL });
     for (const stmt of DDL) await pool.query(stmt);
     await pool.query('ALTER TABLE bookings ADD COLUMN IF NOT EXISTS vendor_id TEXT');
     await pool.query('ALTER TABLE bookings ADD COLUMN IF NOT EXISTS arrived_at TEXT');
+    await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT');
   }
   // Seed DB-backed pricing from shared defaults (DB is authoritative).
   for (const c of WASTE_CATEGORIES) {
