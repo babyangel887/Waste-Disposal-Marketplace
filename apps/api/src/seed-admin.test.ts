@@ -8,7 +8,7 @@ import { app } from './index.js';
 import { get, run } from './db.js';
 import { ensureSeedAdmin } from './seed-admin.js';
 import { verifyPassword } from './password.js';
-import { demoteDefaultAdmin } from './seed.js';
+import { demoteDefaultAdmin, runStartupSeed } from './seed.js';
 import { ensureSeedAdmin as ensureLegacyAdmin } from './test-setup.js';
 
 const base = 'http://127.0.0.1:4109';
@@ -104,6 +104,28 @@ const server = app.listen(4109, async () => {
     const d2 = await demoteDefaultAdmin();
     assert(d2 === false, 'cleanup re-run is a no-op');
     await ensureLegacyAdmin();
+
+    // startup seed (Render free-plan flow): ADMIN_* vars create the env admin
+    const savedPhone = process.env.ADMIN_PHONE;
+    const savedPass = process.env.ADMIN_PASSWORD;
+    try {
+      process.env.ADMIN_PHONE = '+2347990030001';
+      process.env.ADMIN_PASSWORD = 'startup-seed-pass-1234';
+      await runStartupSeed();
+      const srow = (await get('SELECT * FROM users WHERE phone = ?', '+2347990030001')) as any;
+      assert(srow?.role === 'admin', 'startup seed creates env admin');
+      assert(verifyPassword('startup-seed-pass-1234', srow.password_hash), 'startup admin password verifies');
+      await runStartupSeed();
+      const sn = Number(((await get('SELECT COUNT(*) as c FROM users WHERE phone = ?', '+2347990030001')) as any).c);
+      assert(sn === 1, 'startup seed idempotent');
+      delete process.env.ADMIN_PHONE;
+      delete process.env.ADMIN_PASSWORD;
+      await runStartupSeed();
+      assert(true, 'startup seed skips silently without vars');
+    } finally {
+      if (savedPhone !== undefined) process.env.ADMIN_PHONE = savedPhone; else delete process.env.ADMIN_PHONE;
+      if (savedPass !== undefined) process.env.ADMIN_PASSWORD = savedPass; else delete process.env.ADMIN_PASSWORD;
+    }
 
     console.log('\nSeed-admin smoke: ALL PASS');
     server.close();

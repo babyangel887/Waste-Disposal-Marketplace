@@ -1,5 +1,6 @@
 import './env.js';
 import { get, run } from './db.js';
+import { ensureSeedAdmin } from './seed-admin.js';
 import crypto from 'node:crypto';
 
 export const DEFAULT_ADMIN_PHONE = '+2348000000001';
@@ -31,10 +32,25 @@ export async function demoteDefaultAdmin(): Promise<boolean> {
   return true;
 }
 
-async function main() {
+// Env-driven admin seed for hosts without a shell (e.g. Render free plan):
+// when BOTH ADMIN_PHONE and ADMIN_PASSWORD are set, ensure that admin via
+// the same idempotent logic as seed:admin. Missing vars: skip silently.
+// Invalid values: log the reason (never the password) and keep starting.
+export async function ensureEnvAdmin(): Promise<void> {
+  if (!process.env.ADMIN_PHONE || !process.env.ADMIN_PASSWORD) return;
+  try {
+    const r = await ensureSeedAdmin();
+    console.log(`[seed] env admin ensured: ${r.phone}`);
+  } catch (e: any) {
+    console.error('[seed] env admin skipped', e?.message ?? e);
+  }
+}
+
+export async function runStartupSeed() {
   if (isProductionEnv()) {
     console.log('[seed] production/postgres guard: skipping default admin creation');
     await demoteDefaultAdmin();
+    await ensureEnvAdmin();
     return;
   }
   // Seeds a demo admin + pilot catalog note. Categories/LGAs live in @waste/shared.
@@ -49,7 +65,12 @@ async function main() {
   } else {
     console.log('[seed] admin exists:', adminPhone);
   }
+  await ensureEnvAdmin();
   console.log('[seed] pilot LGAs: Eti-Osa, Ikeja; categories: bagged, bulky, rubble, recyclable');
+}
+
+async function main() {
+  await runStartupSeed();
 }
 
 const isMain = (process.argv[1] ?? '').replace(/\\/g, '/').endsWith('apps/api/src/seed.ts');
