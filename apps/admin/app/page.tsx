@@ -54,15 +54,21 @@ export default function Home() {
           <h2 style={{ marginTop: 0 }}>Contact us</h2>
           <p>Questions, partnerships or support — reach out:</p>
           <ul style={{ lineHeight: 1.8 }}>
-            <li>Address: TODO — e.g. 12 Admiralty Way, Lekki Phase 1, Lagos, Nigeria</li>
-            <li>Phone: TODO — e.g. +234 800 000 0000</li>
-            <li>Email: TODO — e.g. hello@example.com</li>
+            <li>Business: Springconsole International Limited, RC/BN 1392332</li>
+            <li>Registered office: Port Harcourt, Rivers State, Nigeria</li>
+            <li>Operations: Lagos (pilot areas: Eti-Osa and Ikeja)</li>
+            <li>Address: #1 Ajikere Street Off Chindah Street, Stadium Road, Port Harcourt, Rivers State, Nigeria</li>
+            <li>Phone: +2347076222477</li>
+            <li>Email: wastedisposalmarketplace@gmail.com</li>
           </ul>
         </section>
 
         <footer style={{ textAlign: 'center', color: '#5f6f63', fontSize: 14, padding: '8px 0 24px' }}>
-          <a href="/privacy">Privacy Policy</a> · <a href="/login">Login</a> ·{' '}
-          <a href="/admin-tools">Admin tools</a>
+          <div style={{ marginBottom: 8 }}>
+            <a href="/privacy">Privacy Policy</a> · <a href="/login">Login</a> ·{' '}
+            <a href="/admin-tools">Admin tools</a>
+          </div>
+          <div>Waste Marketplace is a product of Springconsole International Limited</div>
         </footer>
       </div>
     </main>
