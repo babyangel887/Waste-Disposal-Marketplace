@@ -1,14 +1,38 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, Button, ActivityIndicator, Image, ScrollView } from 'react-native';
+import { View, Text, TextInput, Button, ActivityIndicator, Image, ScrollView, Linking } from 'react-native';
 import * as Location from 'expo-location';
 import * as ImagePicker from 'expo-image-picker';
+import * as WebBrowser from 'expo-web-browser';
 import { API_BASE, authHeaders } from '../api';
 import { theme } from '../theme';
 
 // Same booking API calls as before:
 // POST /bookings/estimate, POST /bookings, POST /bookings/:id/authorize-payment.
+// Live Paystack returns authorization_url -> in-app browser, then poll
+// GET /bookings/:id until it leaves awaiting_payment. Mock mode has no
+// authorization_url and holds immediately.
 // GPS replaces hardcoded lat/lng; image picker + presign replaces hardcoded photo key.
 const CATS = ['bagged', 'bulky', 'rubble', 'recyclable'];
+
+// Poll the booking every few seconds (up to ~1 minute) until the webhook
+// moves it out of awaiting_payment. Returns the final status or null.
+async function waitForPayment(bookingId: string, token: string, onTick?: (n: number) => void): Promise<string | null> {
+  const TRIES = 20;
+  const GAP_MS = 3000;
+  for (let i = 0; i < TRIES; i++) {
+    await new Promise((r) => setTimeout(r, GAP_MS));
+    onTick?.(i + 1);
+    try {
+      const d: any = await fetch(`${API_BASE}/api/v1/bookings/${bookingId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      }).then((x) => x.json());
+      if (d?.booking && d.booking.status !== 'awaiting_payment') return d.booking.status as string;
+    } catch {
+      // transient network error — keep polling
+    }
+  }
+  return null;
+}
 
 export function BookingScreen({ token, onBooked }: { token: string; onBooked?: (bookingId: string) => void }) {
   const [cat, setCat] = useState('bagged');
@@ -120,6 +144,31 @@ export function BookingScreen({ token, onBooked }: { token: string; onBooked?: (
         headers: authHeaders(token),
         body: JSON.stringify({ provider: 'paystack' }),
       }).then((x) => x.json());
+      if (!p.payment) {
+        setMsg('payment init failed: ' + JSON.stringify(p));
+        return;
+      }
+      // Live mode: open the Paystack checkout, then wait for the webhook.
+      if (p.authorization_url) {
+        setMsg('opening secure checkout…');
+        try {
+          await WebBrowser.openBrowserAsync(p.authorization_url);
+        } catch {
+          await Linking.openURL(p.authorization_url);
+        }
+        setMsg('confirming payment…');
+        const status = await waitForPayment(b.booking.id, token, (n) =>
+          setMsg(`confirming payment… (${n * 3}s)`)
+        );
+        if (status) {
+          setMsg(`payment confirmed: booking ${b.booking.id} is ${status}`);
+          onBooked?.(b.booking.id);
+        } else {
+          setMsg(`payment not confirmed yet for booking ${b.booking.id}. The webhook may still arrive — check Track driver later.`);
+        }
+        return;
+      }
+      // Mock mode: hold is immediate, no browser step.
       setMsg('booked+held: ' + JSON.stringify({ booking: b.booking.id, status: p.booking?.status, payment: p.payment?.status }));
       onBooked?.(b.booking.id);
     } catch (e: any) {
