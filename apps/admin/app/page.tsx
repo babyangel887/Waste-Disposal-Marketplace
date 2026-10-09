@@ -35,7 +35,7 @@ export default function Home() {
             <ol style={{ paddingLeft: 20, lineHeight: 1.7 }}>
               <li>Log in with your phone number (OTP).</li>
               <li>Choose a waste category, quantity and pickup location with photos.</li>
-              <li>See the upfront price and pay securely (Paystack / Flutterwave).</li>
+              <li>See the upfront price and pay securely online.</li>
               <li>Track your collector live and raise a dispute if anything goes wrong.</li>
             </ol>
           </div>
@@ -44,7 +44,7 @@ export default function Home() {
             <ol style={{ paddingLeft: 20, lineHeight: 1.7 }}>
               <li>Sign up and submit your business, vehicle and documents.</li>
               <li>Get approved by our ops team.</li>
-              <li>Accept nearby job offers and navigate to the customer.</li>
+              <li>Accept nearby job offers and travel to the customer.</li>
               <li>Complete the job and get paid out to your account.</li>
             </ol>
           </div>
