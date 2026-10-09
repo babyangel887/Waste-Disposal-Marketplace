@@ -1,12 +1,16 @@
 {
   "compilerOptions": {
     "target": "ES2020",
-    "module": "CommonJS",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
     "strict": true,
     "skipLibCheck": true,
     "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "resolveJsonModule": true,
     "jsx": "react-native",
-    "noEmit": true
+    "noEmit": true,
+    "types": ["node"]
   },
-  "include": ["App.tsx", "src"]
+  "include": ["App.tsx", "index.js", "src", "babel.config.js"]
 }
