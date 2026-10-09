@@ -1,7 +1,7 @@
 process.env.JWT_SECRET = 'test-secret-min-32-chars-xxxxxxxx';
 process.env.OTP_MODE = 'mock';
 import { app } from './index.js';
-import { ensureSeedAdmin } from './test-setup.js';
+import { ensureSeedAdmin, TEST_ADMIN_PASSWORD } from './test-setup.js';
 
 const base = 'http://127.0.0.1:4102';
 const server = app.listen(4102, async () => {
@@ -54,11 +54,9 @@ const server = app.listen(4102, async () => {
     const prof = await get('/api/v1/vendor/me/profile', vtok);
     assert((prof.j as any).profile.approved_status === 'pending', 'vendor profile pending');
 
-    // admin login via seeded admin (OTP mock; ensured locally for fresh DBs)
+    // admin login via seeded admin password (admins cannot use OTP)
     await ensureSeedAdmin();
-    const aphone = '+2348000000001';
-    const ao: any = await post('/api/v1/auth/request-otp', { phone: aphone });
-    const av: any = await post('/api/v1/auth/verify-otp', { phone: aphone, code: (ao.j as any)._devCode });
+    const av: any = await post('/api/v1/auth/admin-login', { phone: '+2348000000001', password: TEST_ADMIN_PASSWORD });
     assert(!!av.j.access_token, 'seed admin login');
     const atok: string = av.j.access_token;
 

@@ -30,6 +30,13 @@ app.post('/api/v1/auth/request-otp', ah(async (req: any, res: any) => {
   try {
     const { phone } = req.body ?? {};
     if (!phone) return res.status(400).json({ error: 'phone required' });
+    const cleanPhone = String(phone).replace(/\s/g, '');
+    const existing = (await get('SELECT * FROM users WHERE phone = ?', cleanPhone)) as any;
+    // Admins can only use password login — never issue them OTP codes,
+    // especially in mock mode where the code is returned in the response.
+    if (existing && existing.role === 'admin') {
+      return res.status(403).json({ error: 'admins must use admin-login' });
+    }
     const r = await requestOtp(String(phone));
     res.json(r);
   } catch (e: any) {
@@ -60,6 +67,8 @@ app.post('/api/v1/auth/verify-otp', ah(async (req: any, res: any) => {
     }
     if (user && user.active === 0) return res.status(403).json({ error: 'account blocked' });
     const fresh = (await get('SELECT * FROM users WHERE phone = ?', cleanPhone)) as any;
+    // Admins can only log in via admin-login with a password, never via OTP.
+    if (fresh.role === 'admin') return res.status(403).json({ error: 'admins must use admin-login' });
     const payload = { sub: fresh.id, role: fresh.role, phone: fresh.phone };
     res.json({
       access_token: signAccess(payload),

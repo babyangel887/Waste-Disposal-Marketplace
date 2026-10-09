@@ -1,7 +1,7 @@
 process.env.JWT_SECRET = 'test-secret-min-32-chars-xxxxxxxx';
 process.env.OTP_MODE = 'mock';
 import { app } from './index.js';
-import { ensureSeedAdmin } from './test-setup.js';
+import { ensureSeedAdmin, TEST_ADMIN_PASSWORD } from './test-setup.js';
 
 const base = 'http://127.0.0.1:4104';
 const server = app.listen(4104, async () => {
@@ -37,7 +37,7 @@ const server = app.listen(4104, async () => {
       documents: { vehicle_reg: 'd1', drivers_license: 'd2', business_doc: 'd3' },
     }, vtok);
     await ensureSeedAdmin();
-    const atok = await otpLogin('+2348000000001');
+    const atok = (await post('/api/v1/auth/admin-login', { phone: '+2348000000001', password: TEST_ADMIN_PASSWORD })).j.access_token as string;
     const ap = await post(`/api/v1/admin/vendors/${vendorId}/approve`, {}, atok);
     assert(ap.j.status === 'approved', 'vendor approved');
 

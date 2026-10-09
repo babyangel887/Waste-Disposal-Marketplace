@@ -252,6 +252,7 @@ let initializing = false;
 async function init(): Promise<void> {
   initializing = true;
   try {
+  console.log(`[db] backend=${isPostgres ? 'postgres' : 'sqlite'}`);
   if (!isPostgres) {
     const dbPath = DATABASE_URL.replace(/^file:/, '');
     const resolved = path.resolve(process.cwd(), dbPath);

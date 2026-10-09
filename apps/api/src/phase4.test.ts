@@ -1,7 +1,7 @@
 process.env.JWT_SECRET = 'test-secret-min-32-chars-xxxxxxxx';
 process.env.OTP_MODE = 'mock';
 import { app } from './index.js';
-import { ensureSeedAdmin, clearOffers } from './test-setup.js';
+import { ensureSeedAdmin, clearOffers, TEST_ADMIN_PASSWORD } from './test-setup.js';
 
 const base = 'http://127.0.0.1:4105';
 const server = app.listen(4105, async () => {
@@ -34,7 +34,8 @@ const server = app.listen(4105, async () => {
       business_name: 'Phase4 Trucks', vehicle: { plate_no: 'P4-001', type: 'tipper' },
       documents: { vehicle_reg: 'd1', drivers_license: 'd2', business_doc: 'd3' },
     }, v.token);
-    const a = await otpLogin('+2348000000001');
+    const alogin: any = await post('/api/v1/auth/admin-login', { phone: '+2348000000001', password: TEST_ADMIN_PASSWORD });
+    const a = { token: alogin.j.access_token as string, id: '' as string };
     await post(`/api/v1/admin/vendors/${v.id}/approve`, {}, a.token);
 
     async function paidBooking(total?: number) {

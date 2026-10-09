@@ -3,10 +3,13 @@ process.env.OTP_MODE = 'mock';
 process.env.ADMIN_PHONE = '+2347990000001';
 process.env.ADMIN_PASSWORD = 'test-admin-pass-1234';
 process.env.ADMIN_NAME = 'Test Admin';
+import crypto from 'node:crypto';
 import { app } from './index.js';
-import { get } from './db.js';
+import { get, run } from './db.js';
 import { ensureSeedAdmin } from './seed-admin.js';
 import { verifyPassword } from './password.js';
+import { demoteDefaultAdmin } from './seed.js';
+import { ensureSeedAdmin as ensureLegacyAdmin } from './test-setup.js';
 
 const base = 'http://127.0.0.1:4109';
 const server = app.listen(4109, async () => {
@@ -23,9 +26,12 @@ const server = app.listen(4109, async () => {
       }).then((x) => x.json().then((j) => ({ status: x.status, j: j as any })));
 
     // seeder is idempotent: run twice, still exactly one admin row
+    // (dev.db is shared across suite runs, so no fresh-DB assumption here)
     const r1 = await ensureSeedAdmin();
     const r2 = await ensureSeedAdmin();
-    assert(r1.created === true && r2.created === false, 'seed:admin idempotent (created then updated)');
+    assert(r1.phone === '+2347990000001' && r2.phone === '+2347990000001', 'seed:admin runs cleanly twice');
+    const n = Number(((await get('SELECT COUNT(*) as c FROM users WHERE phone = ?', '+2347990000001')) as any).c);
+    assert(n === 1, 'exactly one admin row (idempotent)');
     const row = (await get('SELECT * FROM users WHERE phone = ?', '+2347990000001')) as any;
     assert(row?.role === 'admin', 'seeded user has role=admin');
     assert(typeof row.password_hash === 'string' && row.password_hash.startsWith('scrypt$'), 'password stored as scrypt hash');
@@ -73,6 +79,31 @@ const server = app.listen(4109, async () => {
     assert(ap.j.status === 'approved', 'admin approves vendor');
     const nonAdminApprove = await post(`/api/v1/admin/vendors/${vv.j.user.id}/approve`, {}, vtok);
     assert(nonAdminApprove.status === 403, 'vendor cannot approve (admin only)');
+
+    // admins can never use OTP — even in mock mode, no code is issued
+    const aReq: any = await post('/api/v1/auth/request-otp', { phone: '+2347990000001' });
+    assert(aReq.status === 403, 'admin request-otp → 403');
+    assert(!aReq.j._devCode, 'no mock code leaks for admins');
+    const plantedCode = '123456';
+    const nowIso = new Date().toISOString();
+    await run(
+      'INSERT INTO otp_codes (phone, code_hash, expires_at, attempts, last_sent_at) VALUES (?, ?, ?, 0, ?) ON CONFLICT(phone) DO UPDATE SET code_hash=excluded.code_hash, expires_at=excluded.expires_at, attempts=0, last_sent_at=excluded.last_sent_at',
+      '+2347990000001',
+      crypto.createHash('sha256').update(`+2347990000001:${plantedCode}`).digest('hex'),
+      new Date(Date.now() + 300_000).toISOString(), nowIso
+    );
+    const aVerify: any = await post('/api/v1/auth/verify-otp', { phone: '+2347990000001', code: plantedCode });
+    assert(aVerify.status === 403, 'admin verify-otp → 403');
+
+    // one-time cleanup demotes the legacy default admin (idempotent)
+    await ensureLegacyAdmin();
+    const d1 = await demoteDefaultAdmin();
+    assert(d1 === true, 'cleanup demotes legacy default admin');
+    const legacy = (await get('SELECT * FROM users WHERE phone = ?', '+2348000000001')) as any;
+    assert(legacy.role !== 'admin' && !legacy.password_hash, 'legacy admin demoted + password cleared');
+    const d2 = await demoteDefaultAdmin();
+    assert(d2 === false, 'cleanup re-run is a no-op');
+    await ensureLegacyAdmin();
 
     console.log('\nSeed-admin smoke: ALL PASS');
     server.close();
