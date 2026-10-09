@@ -1,5 +1,5 @@
 import './env.js';
-import { initializeTransaction } from './paystack.js';
+import { initializeTransaction, isPaystackLive, placeholderEmail, verifyWebhookSignature } from './paystack.js';
 import express from 'express';
 import cors from 'cors';
 import crypto from 'node:crypto';
@@ -10,7 +10,12 @@ import { estimatePrice, PILOT_LGAS, WASTE_CATEGORIES, PRIVACY_POLICY_VERSION } f
 
 export const app = express();
 app.use(cors());
-app.use(express.json());
+// Keep the raw body so the Paystack webhook can verify the HMAC signature.
+app.use(express.json({
+  verify: (req: any, _res: any, buf: Buffer) => {
+    req.rawBody = buf;
+  },
+}));
 
 // Express 4 does not catch async errors — every async handler/middleware
 // goes through ah() so rejections become 500s instead of hung requests.
@@ -371,6 +376,31 @@ app.post('/api/v1/bookings/:id/authorize-payment', auth, ah(async (req: any, res
   const existing = (await get('SELECT * FROM payments WHERE booking_id = ?', req.params.id)) as any;
   if (existing) return res.json({ payment: existing, booking: serializeBooking(booking) });
   const now = new Date().toISOString();
+  // Live Paystack: initialize a real transaction; money is only secured later
+  // by a verified charge.success webhook (payment stays 'authorized' until then).
+  if (provider === 'paystack' && isPaystackLive()) {
+    const user = (await get('SELECT * FROM users WHERE id = ?', req.user.sub)) as any;
+    const email = placeholderEmail(user?.phone ?? '', req.user.sub);
+    const reference = `waste_${req.params.id}_${Date.now()}`;
+    const amountKobo = booking.total_price * 100;
+    let init: { authorization_url: string; reference: string };
+    try {
+      init = await initializeTransaction(email, amountKobo, reference);
+    } catch {
+      return res.status(502).json({ error: 'payment provider unavailable' });
+    }
+    const payment = {
+      id: crypto.randomUUID(), booking_id: req.params.id, provider,
+      authorization_code: null, amount_ngn: booking.total_price, status: 'authorized',
+      gateway_ref: init.reference,
+      idempotency_key: `auth:${req.params.id}`, created_at: now, updated_at: now,
+    };
+    await run(
+      'INSERT INTO payments (id, booking_id, provider, authorization_code, amount_ngn, status, gateway_ref, idempotency_key, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      payment.id, payment.booking_id, payment.provider, payment.authorization_code,
+      payment.amount_ngn, payment.status, payment.gateway_ref, payment.idempotency_key, now, now);
+    return res.status(201).json({ payment, booking: serializeBooking(booking), authorization_url: init.authorization_url });
+  }
   const prefix = provider === 'paystack' ? 'AUTH' : 'FLW';
   const payment = {
     id: crypto.randomUUID(), booking_id: req.params.id, provider,
@@ -511,6 +541,35 @@ async function handleMockWebhook(provider: string, body: any) {
   return { status: 200 as const, json: { ok: true } };
 }
 app.post('/api/v1/webhooks/paystack', ah(async (req: any, res: any) => {
+  // Live mode: real Paystack events with HMAC signature verification.
+  if (isPaystackLive()) {
+    const sig = req.headers['x-paystack-signature'];
+    const raw: Buffer = req.rawBody ?? Buffer.from(JSON.stringify(req.body ?? {}));
+    if (!verifyWebhookSignature(raw, Array.isArray(sig) ? sig[0] : sig)) {
+      return res.status(401).json({ error: 'invalid signature' });
+    }
+    const { event, data } = req.body ?? {};
+    if (event !== 'charge.success') return res.json({ ok: true, ignored: event ?? null });
+    const reference = data?.reference ? String(data.reference) : '';
+    if (!reference) return res.status(400).json({ error: 'reference required' });
+    const payment = (await get('SELECT * FROM payments WHERE gateway_ref = ?', reference)) as any;
+    if (!payment) return res.json({ ok: true, ignored: 'unknown reference' });
+    // Idempotent replay: already secured.
+    if (payment.status === 'held') return res.json({ ok: true, idempotent: true });
+    if (data?.status !== 'success') return res.json({ ok: true, ignored: data?.status ?? null });
+    if (Number(data?.amount) !== payment.amount_ngn * 100) {
+      return res.status(400).json({ error: 'amount mismatch' });
+    }
+    const now = new Date().toISOString();
+    const booking = (await get('SELECT * FROM bookings WHERE id = ?', payment.booking_id)) as any;
+    await run('UPDATE payments SET status=?, updated_at=? WHERE id=?', 'held', now, payment.id);
+    if (booking && booking.status === 'awaiting_payment') {
+      await run('UPDATE bookings SET status=?, updated_at=? WHERE id=?', 'searching_vendor', now, payment.booking_id);
+      await recordHistory(payment.booking_id, 'awaiting_payment', 'searching_vendor', booking.customer_id, null, null);
+      await createOffer(payment.booking_id);
+    }
+    return res.json({ ok: true });
+  }
   const r = await handleMockWebhook('paystack', req.body);
   res.status(r.status).json(r.json);
 }));
@@ -1077,7 +1136,8 @@ app.post('/api/v1/payments/initialize', ah(async (req: any, res: any) => {
   }
 
   try {
-    const result = await initializeTransaction(email, Number(amount));
+    const reference = `tmp_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`;
+    const result = await initializeTransaction(email, Number(amount) * 100, reference);
     return res.status(200).json(result);
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
