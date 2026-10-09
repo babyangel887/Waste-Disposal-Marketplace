@@ -40,7 +40,7 @@ export function BookingScreen({ token, onBooked }: { token: string; onBooked?: (
   const [lga, setLga] = useState('Ikeja');
   const [address, setAddress] = useState('');
   const [photoKeys, setPhotoKeys] = useState<string[]>([]);
-  const [localUri, setLocalUri] = useState<string | null>(null);
+  const [localUris, setLocalUris] = useState<string[]>([]);
   const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [msg, setMsg] = useState('');
   const [busy, setBusy] = useState(false);
@@ -70,24 +70,49 @@ export function BookingScreen({ token, onBooked }: { token: string; onBooked?: (
     });
     if (res.canceled || !res.assets?.[0]) return;
     const asset = res.assets[0];
-    setLocalUri(asset.uri);
-    // Upload via presign so the booking uses a real key, not a demo string.
+    if (photoKeys.length >= 5) {
+      setMsg('max 5 photos');
+      return;
+    }
+    // Ask the API for an upload slot. Mock/dev mode returns mock:true (no
+    // upload needed); real S3/R2 mode returns a presigned PUT uploadUrl.
+    let pre: any;
     try {
-      const pre: any = await fetch(`${API_BASE}/api/v1/uploads/presign`, {
+      const r = await fetch(`${API_BASE}/api/v1/uploads/presign`, {
         method: 'POST',
         headers: authHeaders(token),
         body: JSON.stringify({ kind: 'waste_photo', contentType: 'image/jpeg' }),
-      }).then((x) => x.json());
-      if (pre?.key && pre?.uploadUrl) {
-        const blob: any = await (await fetch(asset.uri)).blob();
-        await fetch(pre.uploadUrl, { method: 'PUT', body: blob });
-        setPhotoKeys((k) => [...k, pre.key].slice(0, 5));
-        setMsg('photo uploaded: ' + pre.key);
-      } else {
-        setMsg('presign failed: ' + JSON.stringify(pre).slice(0, 200));
-      }
+      });
+      pre = await r.json();
+      if (!r.ok || !pre?.key) throw new Error(pre?.error ?? `presign HTTP ${r.status}`);
     } catch (e: any) {
-      setMsg('upload failed (key kept locally): ' + String(e?.message ?? e));
+      setMsg('could not prepare photo upload: ' + String(e?.message ?? e));
+      return;
+    }
+    if (pre.mock) {
+      // Dev storage: nothing to upload, the key itself books the photo.
+      setPhotoKeys((k) => [...k, pre.key].slice(0, 5));
+      setLocalUris((u) => [...u, asset.uri].slice(0, 5));
+      setMsg(`${Math.min(photoKeys.length + 1, 5)} photo(s) added (dev storage — not production)`);
+      return;
+    }
+    if (!pre.uploadUrl || !pre.publicUrl) {
+      setMsg('could not prepare photo upload: bad server response');
+      return;
+    }
+    try {
+      const blob: any = await (await fetch(asset.uri)).blob();
+      const up = await fetch(pre.uploadUrl, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'image/jpeg' },
+        body: blob,
+      });
+      if (!up.ok) throw new Error(`upload HTTP ${up.status}`);
+      setPhotoKeys((k) => [...k, pre.publicUrl].slice(0, 5));
+      setLocalUris((u) => [...u, asset.uri].slice(0, 5));
+      setMsg(`${Math.min(photoKeys.length + 1, 5)} photo(s) added`);
+    } catch (e: any) {
+      setMsg('photo upload failed, please try again: ' + String(e?.message ?? e));
     }
   }
 
@@ -195,8 +220,12 @@ export function BookingScreen({ token, onBooked }: { token: string; onBooked?: (
         <Button title="Add photo" onPress={pickPhoto} />
       </View>
       {!!coords && <Text style={theme.msg}>gps: {coords.lat.toFixed(5)}, {coords.lng.toFixed(5)}</Text>}
-      {!!localUri && <Image source={{ uri: localUri }} style={{ width: '100%', height: 180, borderRadius: 8, marginTop: 8 }} />}
-      {!!photoKeys.length && <Text style={theme.msg}>photos: {photoKeys.join(', ')}</Text>}
+      {!!photoKeys.length && <Text style={theme.msg}>{photoKeys.length} photo(s) added</Text>}
+      <View style={{ flexDirection: 'row', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+        {localUris.map((u) => (
+          <Image key={u} source={{ uri: u }} style={{ width: 100, height: 100, borderRadius: 8 }} />
+        ))}
+      </View>
       <View style={theme.buttonRow}>
         <Button title="Estimate" onPress={estimate} disabled={busy} />
         <Button title="Book + Pay" onPress={bookAndPay} disabled={busy} />

@@ -8,10 +8,12 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
     "seed": "tsx src/seed.ts",
-    "test": "tsx src/smoke.test.ts && tsx src/phase1.test.ts && tsx src/phase2.test.ts && tsx src/phase3.test.ts && tsx src/phase4.test.ts && tsx src/phase5.test.ts && tsx src/paystack-live.test.ts",
+    "test": "tsx src/smoke.test.ts && tsx src/phase1.test.ts && tsx src/phase2.test.ts && tsx src/phase3.test.ts && tsx src/phase4.test.ts && tsx src/phase5.test.ts && tsx src/paystack-live.test.ts && tsx src/uploads.test.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1148.0",
+    "@aws-sdk/s3-request-presigner": "^3.1148.0",
     "@waste/shared": "0.1.0",
     "cors": "^2.8.5",
     "express": "^4.19.2",

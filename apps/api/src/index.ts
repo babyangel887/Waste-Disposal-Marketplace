@@ -1,5 +1,6 @@
 import './env.js';
 import { initializeTransaction, isPaystackLive, placeholderEmail, verifyWebhookSignature } from './paystack.js';
+import { presignUpload } from './uploads.js';
 import express from 'express';
 import cors from 'cors';
 import crypto from 'node:crypto';
@@ -578,14 +579,14 @@ app.post('/api/v1/webhooks/flutterwave', ah(async (req: any, res: any) => {
   res.status(r.status).json(r.json);
 }));
 
-// --- Upload presign (photos/docs). Phase 0: local signed URL; prod: S3. ---
+// --- Upload presign (photos/docs): real S3/R2 PUT URL when S3_* set, mock/dev otherwise. ---
 app.post('/api/v1/uploads/presign', auth, ah(async (req: any, res: any) => {
   const { kind, contentType } = req.body ?? {}; // kind: waste_photo | vendor_doc
-  if (!['waste_photo', 'vendor_doc'].includes(kind)) return res.status(400).json({ error: 'invalid kind' });
-  const key = `${kind}/${Date.now()}-${crypto.randomUUID()}`;
-  const base = process.env.S3_PUBLIC_BASE_URL ?? 'http://localhost:4000/uploads';
-  // TODO Phase 1: return real S3 presigned PUT URL when S3_ENDPOINT configured.
-  res.json({ key, uploadUrl: `${base}/${key}?signed=1`, publicUrl: `${base}/${key}`, expiresIn: 600, contentType });
+  try {
+    res.json(await presignUpload(kind, contentType));
+  } catch {
+    return res.status(400).json({ error: 'invalid kind' });
+  }
 }));
 
 // --- Vendor onboarding (Phase 1: all 3 docs required → pending) ---
