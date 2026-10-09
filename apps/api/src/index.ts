@@ -7,10 +7,14 @@ import crypto from 'node:crypto';
 import { get, all, run } from './db.js';
 import { requestOtp, verifyOtp } from './otp.js';
 import { verifyPassword } from './password.js';
+import { checkOtpRequest, clearAdminFailures, isIpBlocked, recordAdminFailure } from './rate-limit.js';
 import { signAccess, signRefresh, verifyToken } from './jwt.js';
 import { estimatePrice, PILOT_LGAS, WASTE_CATEGORIES, PRIVACY_POLICY_VERSION } from '@waste/shared';
 
 export const app = express();
+// Behind Render's reverse proxy: trust the first hop so req.ip is the real
+// client IP (used by the admin-login rate limiter), not Render's.
+app.set('trust proxy', 1);
 app.use(cors());
 // Keep the raw body so the Paystack webhook can verify the HMAC signature.
 app.use(express.json({
@@ -36,6 +40,9 @@ app.post('/api/v1/auth/request-otp', ah(async (req: any, res: any) => {
     // especially in mock mode where the code is returned in the response.
     if (existing && existing.role === 'admin') {
       return res.status(403).json({ error: 'admins must use admin-login' });
+    }
+    if (!checkOtpRequest(cleanPhone)) {
+      return res.status(429).json({ error: 'Too many attempts, try again later' });
     }
     const r = await requestOtp(String(phone));
     res.json(r);
@@ -81,18 +88,26 @@ app.post('/api/v1/auth/verify-otp', ah(async (req: any, res: any) => {
 }));
 
 // --- Admin password login (seeded admins only; OTP stays for everyone else) ---
+// Max 5 failed attempts per phone and per IP in 15 minutes, then 429.
+// A correct login always succeeds (and clears those counters), so failures
+// from other IPs never block it. Passwords are never logged.
 app.post('/api/v1/auth/admin-login', ah(async (req: any, res: any) => {
   const { phone, password } = req.body ?? {};
   if (!phone || !password) return res.status(400).json({ error: 'phone + password required' });
   const cleanPhone = String(phone).replace(/\s/g, '');
+  const ip = req.ip ?? 'unknown';
+  if (isIpBlocked(ip)) {
+    return res.status(429).json({ error: 'Too many attempts, try again later' });
+  }
   const user = (await get('SELECT * FROM users WHERE phone = ?', cleanPhone)) as any;
   // Generic error so callers cannot probe which phones exist.
-  if (!user || user.role !== 'admin' || user.active === 0) {
+  if (!user || user.role !== 'admin' || user.active === 0 || !verifyPassword(String(password), user.password_hash)) {
+    if (recordAdminFailure(cleanPhone, ip)) {
+      return res.status(429).json({ error: 'Too many attempts, try again later' });
+    }
     return res.status(401).json({ error: 'invalid credentials' });
   }
-  if (!verifyPassword(String(password), user.password_hash)) {
-    return res.status(401).json({ error: 'invalid credentials' });
-  }
+  clearAdminFailures(cleanPhone, ip);
   const payload = { sub: user.id, role: user.role, phone: user.phone };
   res.json({
     access_token: signAccess(payload),
