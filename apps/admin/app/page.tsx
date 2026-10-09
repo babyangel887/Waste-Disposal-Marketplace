@@ -1,25 +1,70 @@
-// Phase 0 Admin Control Center skeleton (expanded in Phase 1).
-// Connects to apps/api overview endpoint with admin JWT.
-'use client';
-import { useState } from 'react';
+const card: React.CSSProperties = {
+  background: '#fff',
+  border: '1px solid #dfe7e0',
+  borderRadius: 12,
+  padding: 20,
+};
 
 export default function Home() {
-  const [out, setOut] = useState('');
-  async function check() {
-    const token = (document.getElementById('token') as HTMLInputElement)?.value ?? '';
-    const r = await fetch(`${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000'}/api/v1/admin/overview`, {
-      headers: { Authorization: `Bearer ${token}` },
-    }).then((x) => x.json());
-    setOut(JSON.stringify(r, null, 2));
-  }
   return (
-    <main style={{ padding: 24 }}>
-      <h1>Waste Marketplace - Admin</h1>
-      <p>Phase 5 (pilot hardening). Pilot: Eti-Osa, Ikeja.</p>
-      <input id="token" placeholder="paste admin JWT" style={{ width: 400 }} />
-      <button onClick={check}>Check overview</button>
-      <pre>{out}</pre>
-      <p><a href="/login">Login</a> · <a href="/privacy">Privacy Policy</a> · <a href="/ops">Ops</a> · <a href="/vendors">Vendors</a> · <a href="/pricing">Pricing</a> · <a href="/jobs">Jobs</a></p>
+    <main style={{ fontFamily: 'system-ui', margin: 0, background: '#f6f8f6', minHeight: '100vh' }}>
+      <header style={{ background: '#12351f', color: '#fff', padding: '20px 24px' }}>
+        <div style={{ maxWidth: 960, margin: '0 auto', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+          <div style={{ fontSize: 20, fontWeight: 800 }}>Waste Disposal Marketplace</div>
+          <nav style={{ display: 'flex', gap: 16 }}>
+            <a href="/login" style={{ color: '#fff' }}>Login</a>
+            <a href="/privacy" style={{ color: '#fff' }}>Privacy Policy</a>
+          </nav>
+        </div>
+      </header>
+
+      <div style={{ maxWidth: 960, margin: '0 auto', padding: 24, display: 'grid', gap: 16 }}>
+        <section style={card}>
+          <h1 style={{ marginTop: 0 }}>On-demand waste pickup in Lagos</h1>
+          <p>
+            Waste Disposal Marketplace connects households and businesses with verified local
+            waste collectors. Book a pickup in minutes, pay securely online, and track your
+            collector to your door. Currently piloting in <strong>Eti-Osa</strong> and{' '}
+            <strong>Ikeja</strong>.
+          </p>
+        </section>
+
+        <section style={{ display: 'grid', gap: 16, gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))' }}>
+          <div style={card}>
+            <h2 style={{ marginTop: 0 }}>For customers</h2>
+            <ol style={{ paddingLeft: 20, lineHeight: 1.7 }}>
+              <li>Log in with your phone number (OTP).</li>
+              <li>Choose a waste category, quantity and pickup location with photos.</li>
+              <li>See the upfront price and pay securely (Paystack / Flutterwave).</li>
+              <li>Track your collector live and raise a dispute if anything goes wrong.</li>
+            </ol>
+          </div>
+          <div style={card}>
+            <h2 style={{ marginTop: 0 }}>For vendors</h2>
+            <ol style={{ paddingLeft: 20, lineHeight: 1.7 }}>
+              <li>Sign up and submit your business, vehicle and documents.</li>
+              <li>Get approved by our ops team.</li>
+              <li>Accept nearby job offers and navigate to the customer.</li>
+              <li>Complete the job and get paid out to your account.</li>
+            </ol>
+          </div>
+        </section>
+
+        <section style={card}>
+          <h2 style={{ marginTop: 0 }}>Contact us</h2>
+          <p>Questions, partnerships or support — reach out:</p>
+          <ul style={{ lineHeight: 1.8 }}>
+            <li>Address: TODO — e.g. 12 Admiralty Way, Lekki Phase 1, Lagos, Nigeria</li>
+            <li>Phone: TODO — e.g. +234 800 000 0000</li>
+            <li>Email: TODO — e.g. hello@example.com</li>
+          </ul>
+        </section>
+
+        <footer style={{ textAlign: 'center', color: '#5f6f63', fontSize: 14, padding: '8px 0 24px' }}>
+          <a href="/privacy">Privacy Policy</a> · <a href="/login">Login</a> ·{' '}
+          <a href="/admin-tools">Admin tools</a>
+        </footer>
+      </div>
     </main>
   );
 }
