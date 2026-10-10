@@ -1,23 +1,33 @@
 'use client';
 import { useState } from 'react';
-// Admin password login. Tokens are display-only (copy into Admin tools);
-// the password lives only in this form's state and is never logged or stored.
+import { useRouter } from 'next/navigation';
+import { storeAdminToken } from '../admin-auth';
+// Admin password login. The token goes to sessionStorage and the user is
+// sent to /vendors; the password lives only in this form's state and is
+// never logged or stored.
 export default function Login() {
+  const router = useRouter();
   const [phone, setPhone] = useState('+234');
   const [password, setPassword] = useState('');
   const [out, setOut] = useState('');
   async function login() {
     setOut('');
     try {
-      const r = await fetch(`${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000'}/api/v1/auth/admin-login`, {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000'}/api/v1/auth/admin-login`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ phone, password }),
-      }).then((x) => x.json());
+      });
+      if (res.status === 429) {
+        setOut('Too many attempts, try again later');
+        return;
+      }
+      const r = await res.json();
       if (!r.access_token) {
         setOut('Login failed');
         return;
       }
-      setOut(r.access_token);
+      storeAdminToken(r.access_token);
+      router.push('/vendors');
     } catch {
       setOut('Login failed');
     } finally {

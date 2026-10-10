@@ -1,8 +1,8 @@
 'use client';
 import { useState } from 'react';
+import { useAdminSession } from '../admin-auth';
 const API = `${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000'}`;
-// Phase 1: vendor queue approve/reject/block. Seed-admin JWT required.
-// Paste the access token from /login, load Pending, then approve per row.
+// Phase 1: vendor queue approve/reject/block. Token comes from the login session.
 type Vendor = {
   id: string;
   phone?: string;
@@ -12,11 +12,12 @@ type Vendor = {
   blocked?: boolean | number;
 };
 export default function Vendors() {
-  const [token, setToken] = useState('');
+  const { token, ready, logout } = useAdminSession();
   const [out, setOut] = useState('');
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [status, setStatus] = useState('pending');
   async function load(s = status) {
+    if (!token) return;
     setStatus(s);
     setOut('');
     const r = await fetch(`${API}/api/v1/admin/vendors?status=${s}`, {
@@ -26,6 +27,7 @@ export default function Vendors() {
     setOut(JSON.stringify(r, null, 2));
   }
   async function act(id: string, action: string) {
+    if (!token) return;
     setOut('');
     const r = await fetch(`${API}/api/v1/admin/vendors/${id}/${action}`, {
       method: 'POST',
@@ -35,10 +37,13 @@ export default function Vendors() {
     setOut(JSON.stringify(r, null, 2));
     await load();
   }
+  if (!ready || !token) return <main style={{ padding: 24 }}>Loading…</main>;
   return (
     <main style={{ padding: 24 }}>
-      <h1>Vendors queue</h1>
-      <input value={token} onChange={(e) => setToken(e.target.value)} placeholder="admin JWT" style={{ width: 400 }} />
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <h1>Vendors queue</h1>
+        <button onClick={logout}>Log out</button>
+      </div>
       <div>
         <button onClick={() => load('pending')}>Pending</button>
         <button onClick={() => load('approved')}>Approved</button>
