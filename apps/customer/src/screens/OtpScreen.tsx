@@ -4,7 +4,7 @@ import { API_BASE } from '../api';
 import { theme } from '../theme';
 
 // Same API calls as before: request-otp -> verify-otp (role=customer) -> consent.
-export function OtpScreen({ onToken }: { onToken: (t: string) => void }) {
+export function OtpScreen({ onToken, notice }: { onToken: (access: string, refresh: string) => void; notice?: string }) {
   const [phone, setPhone] = useState('+234');
   const [code, setCode] = useState('');
   const [msg, setMsg] = useState('');
@@ -36,14 +36,14 @@ export function OtpScreen({ onToken }: { onToken: (t: string) => void }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ phone, code, role: 'customer' }),
       }).then((x) => x.json());
-      if (r.access_token) {
+      if (r.access_token && r.refresh_token) {
         // NDPA consent immediately after signup (PRD §5.1) — kept from skeleton.
         await fetch(`${API_BASE}/api/v1/auth/consent`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${r.access_token}` },
           body: JSON.stringify({ consent_type: 'privacy_policy', version: 'v1.0-phase0' }),
         });
-        onToken(r.access_token);
+        onToken(r.access_token, r.refresh_token);
         return;
       }
       setMsg(JSON.stringify(r));
@@ -58,6 +58,7 @@ export function OtpScreen({ onToken }: { onToken: (t: string) => void }) {
     <View style={theme.card}>
       <Text style={theme.title}>Login</Text>
       <Text style={theme.subtitle}>OTP login as customer</Text>
+      {!!notice && <Text style={theme.error}>{notice}</Text>}
       <Text style={theme.label}>Phone</Text>
       <TextInput value={phone} onChangeText={setPhone} placeholder="+234..." style={theme.input} keyboardType="phone-pad" />
       <View style={theme.navButton} />

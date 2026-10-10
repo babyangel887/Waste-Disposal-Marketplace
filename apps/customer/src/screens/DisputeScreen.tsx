@@ -1,10 +1,10 @@
 import React, { useState } from 'react';
 import { View, Text, TextInput, Button, ActivityIndicator } from 'react-native';
-import { API_BASE, authHeaders } from '../api';
+import { API_BASE, AuthState, apiFetch } from '../api';
 import { theme } from '../theme';
 
 // Same API call: POST /disputes { booking_id, category, notes }.
-export function DisputeScreen({ token, bookingId: initialId }: { token: string; bookingId?: string }) {
+export function DisputeScreen({ auth, bookingId: initialId }: { auth: AuthState; bookingId?: string }) {
   const [bookingId, setBookingId] = useState(initialId ?? '');
   const [category, setCategory] = useState('payment');
   const [notes, setNotes] = useState('');
@@ -18,11 +18,11 @@ export function DisputeScreen({ token, bookingId: initialId }: { token: string; 
     }
     setBusy(true);
     try {
-      const r: any = await fetch(`${API_BASE}/api/v1/disputes`, {
+      const r: any = await apiFetch(`${API_BASE}/api/v1/disputes`, {
         method: 'POST',
-        headers: authHeaders(token),
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ booking_id: bookingId.trim(), category, notes: notes || 'app dispute' }),
-      }).then((x) => x.json());
+      }, auth).then((x) => x.json());
       setMsg(JSON.stringify(r).slice(0, 500));
     } catch (e: any) {
       setMsg('submit failed: ' + String(e?.message ?? e));

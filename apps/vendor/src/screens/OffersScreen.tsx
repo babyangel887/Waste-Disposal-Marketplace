@@ -1,10 +1,10 @@
 import React, { useState } from 'react';
 import { View, Text, Button, ActivityIndicator } from 'react-native';
-import { API_BASE } from '../api';
+import { API_BASE, AuthState, apiFetch } from '../api';
 import { theme } from '../theme';
 
 // Same API call as before: GET /vendor/jobs/offers (60s rolling queue).
-export function OffersScreen({ token }: { token: string }) {
+export function OffersScreen({ auth }: { auth: AuthState }) {
   const [msg, setMsg] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -12,9 +12,7 @@ export function OffersScreen({ token }: { token: string }) {
     setBusy(true);
     setMsg('');
     try {
-      const r: any = await fetch(`${API_BASE}/api/v1/vendor/jobs/offers`, {
-        headers: { Authorization: `Bearer ${token}` },
-      }).then((x) => x.json());
+      const r: any = await apiFetch(`${API_BASE}/api/v1/vendor/jobs/offers`, undefined, auth).then((x) => x.json());
       const offers = r.offers ?? r;
       setMsg(JSON.stringify(offers).slice(0, 1000));
     } catch (e: any) {

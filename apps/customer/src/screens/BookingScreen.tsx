@@ -3,7 +3,7 @@ import { View, Text, TextInput, Button, ActivityIndicator, Image, ScrollView, Li
 import * as Location from 'expo-location';
 import * as ImagePicker from 'expo-image-picker';
 import * as WebBrowser from 'expo-web-browser';
-import { API_BASE, authHeaders } from '../api';
+import { API_BASE, AuthState, apiFetch } from '../api';
 import { theme } from '../theme';
 
 // Same booking API calls as before:
@@ -16,16 +16,14 @@ const CATS = ['bagged', 'bulky', 'rubble', 'recyclable'];
 
 // Poll the booking every few seconds (up to ~1 minute) until the webhook
 // moves it out of awaiting_payment. Returns the final status or null.
-async function waitForPayment(bookingId: string, token: string, onTick?: (n: number) => void): Promise<string | null> {
+async function waitForPayment(bookingId: string, auth: AuthState, onTick?: (n: number) => void): Promise<string | null> {
   const TRIES = 20;
   const GAP_MS = 3000;
   for (let i = 0; i < TRIES; i++) {
     await new Promise((r) => setTimeout(r, GAP_MS));
     onTick?.(i + 1);
     try {
-      const d: any = await fetch(`${API_BASE}/api/v1/bookings/${bookingId}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      }).then((x) => x.json());
+      const d: any = await apiFetch(`${API_BASE}/api/v1/bookings/${bookingId}`, undefined, auth).then((x) => x.json());
       if (d?.booking && d.booking.status !== 'awaiting_payment') return d.booking.status as string;
     } catch {
       // transient network error — keep polling
@@ -34,7 +32,7 @@ async function waitForPayment(bookingId: string, token: string, onTick?: (n: num
   return null;
 }
 
-export function BookingScreen({ token, onBooked }: { token: string; onBooked?: (bookingId: string) => void }) {
+export function BookingScreen({ auth, onBooked }: { auth: AuthState; onBooked?: (bookingId: string) => void }) {
   const [cat, setCat] = useState('bagged');
   const [qty, setQty] = useState('2');
   const [lga, setLga] = useState('Ikeja');
@@ -101,11 +99,11 @@ export function BookingScreen({ token, onBooked }: { token: string; onBooked?: (
     // upload needed); real S3/R2 mode returns a presigned PUT uploadUrl.
     let pre: any;
     try {
-      const r = await fetch(`${API_BASE}/api/v1/uploads/presign`, {
+      const r = await apiFetch(`${API_BASE}/api/v1/uploads/presign`, {
         method: 'POST',
-        headers: authHeaders(token),
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ kind: 'waste_photo', contentType: 'image/jpeg' }),
-      });
+      }, auth);
       pre = await r.json();
       if (!r.ok || !pre?.key) throw new Error(pre?.error ?? `presign HTTP ${r.status}`);
     } catch (e: any) {
@@ -170,9 +168,9 @@ export function BookingScreen({ token, onBooked }: { token: string; onBooked?: (
     }
     setBusy(true);
     try {
-      const b: any = await fetch(`${API_BASE}/api/v1/bookings`, {
+      const b: any = await apiFetch(`${API_BASE}/api/v1/bookings`, {
         method: 'POST',
-        headers: authHeaders(token),
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           category_slug: cat,
           qty: Number(qty),
@@ -182,16 +180,16 @@ export function BookingScreen({ token, onBooked }: { token: string; onBooked?: (
           pickup_address: address,
           photo_keys: photoKeys,
         }),
-      }).then((x) => x.json());
+      }, auth).then((x) => x.json());
       if (!b.booking) {
         setMsg('booking failed: ' + JSON.stringify(b));
         return;
       }
-      const p: any = await fetch(`${API_BASE}/api/v1/bookings/${b.booking.id}/authorize-payment`, {
+      const p: any = await apiFetch(`${API_BASE}/api/v1/bookings/${b.booking.id}/authorize-payment`, {
         method: 'POST',
-        headers: authHeaders(token),
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ provider: 'paystack' }),
-      }).then((x) => x.json());
+      }, auth).then((x) => x.json());
       if (!p.payment) {
         setMsg('payment init failed: ' + JSON.stringify(p));
         return;
@@ -205,7 +203,7 @@ export function BookingScreen({ token, onBooked }: { token: string; onBooked?: (
           await Linking.openURL(p.authorization_url);
         }
         setMsg('confirming payment…');
-        const status = await waitForPayment(b.booking.id, token, (n) =>
+        const status = await waitForPayment(b.booking.id, auth, (n) =>
           setMsg(`confirming payment… (${n * 3}s)`)
         );
         if (status) {

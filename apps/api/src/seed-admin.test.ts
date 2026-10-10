@@ -73,6 +73,23 @@ const server = app.listen(4109, async () => {
     const notAdmin = await post('/api/v1/auth/admin-login', { phone: cphone, password: 'whatever-password' });
     assert(notAdmin.status === 401, 'non-admin password login → 401');
 
+    // refresh flow: valid refresh mints a rotated pair that works
+    assert(!!login.j.refresh_token, 'login returns refresh token');
+    const ref = await post('/api/v1/auth/refresh', { refresh_token: login.j.refresh_token });
+    assert(ref.status === 200 && !!ref.j.access_token && !!ref.j.refresh_token, 'refresh mints new pair');
+    const meRef: any = await fetch(`${base}/api/v1/me`, {
+      headers: { Authorization: `Bearer ${ref.j.access_token}` },
+    }).then((x) => x.json().then((j) => ({ status: x.status, j: j as any })));
+    assert(meRef.status === 200 && meRef.j.role === 'admin', 'refreshed access token works');
+    const wrongType = await post('/api/v1/auth/refresh', { refresh_token: login.j.access_token });
+    assert(wrongType.status === 401, 'access token refused as refresh');
+    const asBearer: any = await fetch(`${base}/api/v1/me`, {
+      headers: { Authorization: `Bearer ${login.j.refresh_token}` },
+    }).then((x) => x.json().then((j) => ({ status: x.status, j: j as any })));
+    assert(asBearer.status === 401, 'refresh token refused as Bearer credential');
+    const garbage = await post('/api/v1/auth/refresh', { refresh_token: 'not-a-token' });
+    assert(garbage.status === 401, 'garbage refresh → 401');
+
     // seeded admin can approve the pending vendor (admin-only gate)
     const atok: string = login.j.access_token;
     const ap = await post(`/api/v1/admin/vendors/${vv.j.user.id}/approve`, {}, atok);

@@ -8,7 +8,7 @@ import { OtpScreen } from './src/screens/OtpScreen';
 import { OnboardingScreen } from './src/screens/OnboardingScreen';
 import { OffersScreen } from './src/screens/OffersScreen';
 import { EarningsScreen } from './src/screens/EarningsScreen';
-import { API_BASE, TOKEN_KEY } from './src/api';
+import { API_BASE, TOKEN_KEY, REFRESH_TOKEN_KEY, SESSION_EXPIRED_MSG, Session, AuthState, apiFetch } from './src/api';
 import { theme } from './src/theme';
 
 export type RootStackParamList = {
@@ -23,6 +23,7 @@ export type RootStackParamList = {
 type VendorStatus = 'unknown' | 'none' | 'pending' | 'approved' | 'rejected' | 'blocked';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
+const CHECK_TIMEOUT_MS = 10_000;
 
 function HomeScreen({ navigation, onLogout }: { navigation: any; onLogout: () => void }) {
   return (
@@ -70,29 +71,74 @@ function PendingScreen({ status, message, checking, onCheck, onLogout }: {
 }
 
 export default function App() {
-  const [token, setToken] = useState<string | null>(null);
+  const [session, setSession] = useState<Session | null>(null);
+  const [notice, setNotice] = useState('');
   const [vstatus, setVstatus] = useState<VendorStatus>('unknown');
   const [statusMsg, setStatusMsg] = useState('');
   const [checking, setChecking] = useState(false);
+  const [checkDead, setCheckDead] = useState(false);
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
-    AsyncStorage.getItem(TOKEN_KEY)
-      .then((t) => setToken(t))
+    Promise.all([AsyncStorage.getItem(TOKEN_KEY), AsyncStorage.getItem(REFRESH_TOKEN_KEY)])
+      .then(([a, r]) => {
+        if (a && r) setSession({ access: a, refresh: r });
+      })
       .finally(() => setReady(true));
   }, []);
+
+  async function saveTokens(access: string, refresh: string) {
+    await AsyncStorage.setItem(TOKEN_KEY, access);
+    await AsyncStorage.setItem(REFRESH_TOKEN_KEY, refresh);
+    setSession({ access, refresh });
+    setNotice('');
+    setVstatus('unknown');
+    setStatusMsg('');
+    setCheckDead(false);
+  }
+
+  async function updateSession(s: Session) {
+    await AsyncStorage.setItem(TOKEN_KEY, s.access);
+    await AsyncStorage.setItem(REFRESH_TOKEN_KEY, s.refresh);
+    setSession(s);
+  }
+
+  async function logout() {
+    await AsyncStorage.removeItem(TOKEN_KEY);
+    await AsyncStorage.removeItem(REFRESH_TOKEN_KEY);
+    setSession(null);
+    setNotice('');
+    setVstatus('unknown');
+    setStatusMsg('');
+    setCheckDead(false);
+  }
+
+  function expireSession() {
+    AsyncStorage.removeItem(TOKEN_KEY);
+    AsyncStorage.removeItem(REFRESH_TOKEN_KEY);
+    setSession(null);
+    setNotice(SESSION_EXPIRED_MSG);
+    setVstatus('unknown');
+    setStatusMsg('');
+    setCheckDead(false);
+  }
+
+  const auth: AuthState | null = session
+    ? { session, update: updateSession, expire: expireSession }
+    : null;
 
   // Single status check used everywhere: after login, after submit,
   // "already approved", and the pending screen's Check status button.
   // approved → Home, pending/rejected/blocked → Pending, 404 → Onboarding.
   async function checkStatus(): Promise<VendorStatus> {
-    if (!token) return 'unknown';
+    if (!auth) return 'unknown';
     setChecking(true);
+    setCheckDead(false);
     setStatusMsg('');
     try {
-      const res = await fetch(`${API_BASE}/api/v1/vendor/me/profile`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const res = await apiFetch(`${API_BASE}/api/v1/vendor/me/profile`, undefined, auth);
+      // A dead session expires here and the navigator returns to Login.
+      if (res.status === 401) return 'unknown';
       const body: any = await res.json().catch(() => ({}));
       if (res.status === 404) {
         setVstatus('none');
@@ -117,27 +163,23 @@ export default function App() {
     }
   }
 
-  // Route by status right after login (or app restart with a saved token).
+  // Route by status right after login (or app restart with a saved session).
   useEffect(() => {
-    if (token && vstatus === 'unknown' && !checking) {
+    if (session && vstatus === 'unknown' && !checking) {
       checkStatus();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, vstatus]);
+  }, [session, vstatus]);
 
-  async function saveToken(t: string) {
-    await AsyncStorage.setItem(TOKEN_KEY, t);
-    setVstatus('unknown');
-    setStatusMsg('');
-    setToken(t);
-  }
-
-  async function logout() {
-    await AsyncStorage.removeItem(TOKEN_KEY);
-    setToken(null);
-    setVstatus('unknown');
-    setStatusMsg('');
-  }
+  // "Checking…" must never hang: after 10s offer Retry + Log out.
+  useEffect(() => {
+    if (vstatus !== 'unknown') {
+      setCheckDead(false);
+      return;
+    }
+    const t = setTimeout(() => setCheckDead(true), CHECK_TIMEOUT_MS);
+    return () => clearTimeout(t);
+  }, [vstatus]);
 
   if (!ready) {
     return (
@@ -151,11 +193,11 @@ export default function App() {
     <SafeAreaProvider>
       <NavigationContainer>
         <Stack.Navigator>
-          {!token ? (
+          {!auth ? (
             <Stack.Screen name="Login" options={{ title: 'Vendor login' }}>
               {() => (
                 <View style={theme.screen}>
-                  <OtpScreen onToken={saveToken} />
+                  <OtpScreen onToken={saveTokens} notice={notice} />
                 </View>
               )}
             </Stack.Screen>
@@ -167,14 +209,14 @@ export default function App() {
               <Stack.Screen name="Offers" options={{ title: 'Job offers' }}>
                 {() => (
                   <ScrollView style={theme.screen}>
-                    <OffersScreen token={token} />
+                    <OffersScreen auth={auth} />
                   </ScrollView>
                 )}
               </Stack.Screen>
               <Stack.Screen name="Earnings" options={{ title: 'Earnings' }}>
                 {() => (
                   <ScrollView style={theme.screen}>
-                    <EarningsScreen token={token} />
+                    <EarningsScreen auth={auth} />
                   </ScrollView>
                 )}
               </Stack.Screen>
@@ -183,7 +225,7 @@ export default function App() {
             <Stack.Screen name="Onboarding" options={{ title: 'Onboarding' }}>
               {() => (
                 <View style={theme.screen}>
-                  <OnboardingScreen token={token} onDone={() => { checkStatus(); }} />
+                  <OnboardingScreen auth={auth} onDone={() => { checkStatus(); }} />
                   <View style={theme.card}>
                     <Button title="I am already approved — continue" onPress={() => { checkStatus(); }} disabled={checking} />
                     <View style={theme.navButton} />
@@ -200,9 +242,23 @@ export default function App() {
           ) : vstatus === 'unknown' ? (
             <Stack.Screen name="Pending" options={{ title: 'Checking…' }}>
               {() => (
-                <View style={[theme.screen, { justifyContent: 'center', alignItems: 'center' }]}>
-                  <ActivityIndicator />
-                  {!!statusMsg && <Text style={theme.msg}>{statusMsg}</Text>}
+                <View style={theme.screen}>
+                  <View style={theme.card}>
+                    <Text style={theme.title}>Checking approval status…</Text>
+                    {checking && !checkDead ? <ActivityIndicator style={{ marginTop: 12 }} /> : null}
+                    {!!statusMsg && <Text style={theme.msg}>{statusMsg}</Text>}
+                    {checkDead ? (
+                      <>
+                        <Text style={theme.msg}>Taking too long. Check your connection and retry.</Text>
+                        <View style={theme.buttonRow}>
+                          <Button title="Retry" onPress={() => { checkStatus(); }} />
+                        </View>
+                        <View style={theme.buttonRow}>
+                          <Button title="Log out" onPress={logout} />
+                        </View>
+                      </>
+                    ) : null}
+                  </View>
                 </View>
               )}
             </Stack.Screen>

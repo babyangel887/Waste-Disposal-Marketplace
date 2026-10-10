@@ -8,7 +8,7 @@ import { OtpScreen } from './src/screens/OtpScreen';
 import { BookingScreen } from './src/screens/BookingScreen';
 import { JobTracking } from './src/screens/JobTracking';
 import { DisputeScreen } from './src/screens/DisputeScreen';
-import { API_BASE, TOKEN_KEY } from './src/api';
+import { API_BASE, TOKEN_KEY, REFRESH_TOKEN_KEY, SESSION_EXPIRED_MSG, Session, AuthState } from './src/api';
 import { theme } from './src/theme';
 
 export type RootStackParamList = {
@@ -43,25 +43,49 @@ function HomeScreen({ navigation, onLogout }: { navigation: any; onLogout: () =>
 }
 
 export default function App() {
-  const [token, setToken] = useState<string | null>(null);
+  const [session, setSession] = useState<Session | null>(null);
+  const [notice, setNotice] = useState('');
   const [ready, setReady] = useState(false);
   const [lastBooking, setLastBooking] = useState<string | undefined>(undefined);
 
   useEffect(() => {
-    AsyncStorage.getItem(TOKEN_KEY)
-      .then((t) => setToken(t))
+    Promise.all([AsyncStorage.getItem(TOKEN_KEY), AsyncStorage.getItem(REFRESH_TOKEN_KEY)])
+      .then(([a, r]) => {
+        if (a && r) setSession({ access: a, refresh: r });
+      })
       .finally(() => setReady(true));
   }, []);
 
-  async function saveToken(t: string) {
-    await AsyncStorage.setItem(TOKEN_KEY, t);
-    setToken(t);
+  async function saveTokens(access: string, refresh: string) {
+    await AsyncStorage.setItem(TOKEN_KEY, access);
+    await AsyncStorage.setItem(REFRESH_TOKEN_KEY, refresh);
+    setSession({ access, refresh });
+    setNotice('');
+  }
+
+  async function updateSession(s: Session) {
+    await AsyncStorage.setItem(TOKEN_KEY, s.access);
+    await AsyncStorage.setItem(REFRESH_TOKEN_KEY, s.refresh);
+    setSession(s);
   }
 
   async function logout() {
     await AsyncStorage.removeItem(TOKEN_KEY);
-    setToken(null);
+    await AsyncStorage.removeItem(REFRESH_TOKEN_KEY);
+    setSession(null);
+    setNotice('');
   }
+
+  function expireSession() {
+    AsyncStorage.removeItem(TOKEN_KEY);
+    AsyncStorage.removeItem(REFRESH_TOKEN_KEY);
+    setSession(null);
+    setNotice(SESSION_EXPIRED_MSG);
+  }
+
+  const auth: AuthState | null = session
+    ? { session, update: updateSession, expire: expireSession }
+    : null;
 
   if (!ready) {
     return (
@@ -75,11 +99,11 @@ export default function App() {
     <SafeAreaProvider>
       <NavigationContainer>
         <Stack.Navigator>
-          {!token ? (
+          {!auth ? (
             <Stack.Screen name="Login" options={{ title: 'Login' }}>
               {() => (
                 <View style={theme.screen}>
-                  <OtpScreen onToken={saveToken} />
+                  <OtpScreen onToken={saveTokens} notice={notice} />
                 </View>
               )}
             </Stack.Screen>
@@ -92,7 +116,7 @@ export default function App() {
                 {({ navigation }: any) => (
                   <View style={theme.screen}>
                     <BookingScreen
-                      token={token}
+                      auth={auth}
                       onBooked={(id) => {
                         setLastBooking(id);
                         navigation.navigate('Tracking', { bookingId: id });
@@ -104,14 +128,14 @@ export default function App() {
               <Stack.Screen name="Tracking" options={{ title: 'Track driver' }} initialParams={{ bookingId: lastBooking }}>
                 {() => (
                   <View style={theme.screen}>
-                    <JobTracking token={token} bookingId={lastBooking} />
+                    <JobTracking auth={auth} bookingId={lastBooking} />
                   </View>
                 )}
               </Stack.Screen>
               <Stack.Screen name="Dispute" options={{ title: 'Dispute' }} initialParams={{ bookingId: lastBooking }}>
                 {() => (
                   <View style={theme.screen}>
-                    <DisputeScreen token={token} bookingId={lastBooking} />
+                    <DisputeScreen auth={auth} bookingId={lastBooking} />
                   </View>
                 )}
               </Stack.Screen>

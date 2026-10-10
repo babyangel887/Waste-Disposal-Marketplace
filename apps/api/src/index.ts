@@ -109,6 +109,32 @@ app.post('/api/v1/auth/admin-login', ah(async (req: any, res: any) => {
   }
   clearAdminFailures(cleanPhone, ip);
   const payload = { sub: user.id, role: user.role, phone: user.phone };
+  const adminTokens = { access_token: signAccess(payload), refresh_token: signRefresh(payload) };
+  res.json({
+    ...adminTokens,
+    user: { id: user.id, role: user.role, phone: user.phone, name: user.name },
+  });
+}));
+
+// --- Token refresh: swap a valid refresh token for a fresh pair (rotated).
+// Access tokens are refused here AND as Bearer credentials (see auth()).
+app.post('/api/v1/auth/refresh', ah(async (req: any, res: any) => {
+  const { refresh_token } = req.body ?? {};
+  if (!refresh_token) return res.status(401).json({ error: 'invalid token' });
+  let decoded: any;
+  try {
+    decoded = verifyToken(String(refresh_token));
+  } catch {
+    return res.status(401).json({ error: 'invalid token' });
+  }
+  if (!decoded || decoded.type !== 'refresh') {
+    return res.status(401).json({ error: 'invalid token' });
+  }
+  const user = (await get('SELECT * FROM users WHERE id = ?', decoded.sub)) as any;
+  if (!user || user.active === 0) {
+    return res.status(401).json({ error: 'invalid token' });
+  }
+  const payload = { sub: user.id, role: user.role, phone: user.phone };
   res.json({
     access_token: signAccess(payload),
     refresh_token: signRefresh(payload),
@@ -121,7 +147,10 @@ function auth(req: any, res: any, next: any) {
   const token = h.startsWith('Bearer ') ? h.slice(7) : null;
   if (!token) return res.status(401).json({ error: 'missing token' });
   try {
-    (req as any).user = verifyToken(token);
+    const decoded = verifyToken(token) as any;
+    // Refresh tokens are only for /auth/refresh — never as API credentials.
+    if (decoded && decoded.type) return res.status(401).json({ error: 'invalid token' });
+    (req as any).user = decoded;
     next();
   } catch {
     return res.status(401).json({ error: 'invalid token' });

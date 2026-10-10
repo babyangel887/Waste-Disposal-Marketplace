@@ -1,10 +1,10 @@
 import React, { useState } from 'react';
 import { View, Text, TextInput, Button, ActivityIndicator } from 'react-native';
-import { API_BASE, authHeaders } from '../api';
+import { API_BASE, AuthState, apiFetch } from '../api';
 import { theme } from '../theme';
 
 // Same API call as before: POST /vendor/onboarding (all 3 doc keys).
-export function OnboardingScreen({ token, onDone }: { token: string; onDone: () => void }) {
+export function OnboardingScreen({ auth, onDone }: { auth: AuthState; onDone: () => void }) {
   const [business, setBusiness] = useState('My Trucks Ltd');
   const [plate, setPlate] = useState('LAG-123XY');
   const [msg, setMsg] = useState('');
@@ -14,15 +14,15 @@ export function OnboardingScreen({ token, onDone }: { token: string; onDone: () 
     setBusy(true);
     setMsg('');
     try {
-      const r: any = await fetch(`${API_BASE}/api/v1/vendor/onboarding`, {
+      const r: any = await apiFetch(`${API_BASE}/api/v1/vendor/onboarding`, {
         method: 'POST',
-        headers: authHeaders(token),
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           business_name: business,
           vehicle: { plate_no: plate, type: 'tipper', capacity_kg: 5000 },
           documents: { vehicle_reg: 'key1', drivers_license: 'key2', business_doc: 'key3' },
         }),
-      }).then((x) => x.json());
+      }, auth).then((x) => x.json());
       setMsg(JSON.stringify(r));
       if (r.status === 'pending' || r.ok) onDone();
     } catch (e: any) {

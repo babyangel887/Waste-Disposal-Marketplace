@@ -1,10 +1,10 @@
 import React, { useState } from 'react';
 import { View, Text, TextInput, Button, ActivityIndicator } from 'react-native';
-import { API_BASE } from '../api';
+import { API_BASE, AuthState, apiFetch } from '../api';
 import { theme } from '../theme';
 
 // Same API call: GET /bookings/:id/location (en_route only, privacy boundary).
-export function JobTracking({ token, bookingId: initialId }: { token: string; bookingId?: string }) {
+export function JobTracking({ auth, bookingId: initialId }: { auth: AuthState; bookingId?: string }) {
   const [bookingId, setBookingId] = useState(initialId ?? '');
   const [msg, setMsg] = useState('');
   const [busy, setBusy] = useState(false);
@@ -16,9 +16,7 @@ export function JobTracking({ token, bookingId: initialId }: { token: string; bo
     }
     setBusy(true);
     try {
-      const r: any = await fetch(`${API_BASE}/api/v1/bookings/${bookingId.trim()}/location`, {
-        headers: { Authorization: `Bearer ${token}` },
-      }).then((x) => x.json());
+      const r: any = await apiFetch(`${API_BASE}/api/v1/bookings/${bookingId.trim()}/location`, undefined, auth).then((x) => x.json());
       setMsg(JSON.stringify(r));
     } catch (e: any) {
       setMsg('load failed: ' + String(e?.message ?? e));
