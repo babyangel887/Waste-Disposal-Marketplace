@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, Button, ActivityIndicator, Image, ScrollView, Linking } from 'react-native';
+import { View, Text, TextInput, Button, ActivityIndicator, Image, ScrollView, Linking, Platform } from 'react-native';
 import * as Location from 'expo-location';
 import * as ImagePicker from 'expo-image-picker';
 import * as WebBrowser from 'expo-web-browser';
@@ -45,14 +45,20 @@ export function BookingScreen({ auth, onBooked }: { auth: AuthState; onBooked?: 
 
   async function useGps() {
     setMsg('');
-    const { status } = await Location.requestForegroundPermissionsAsync();
-    if (status !== 'granted') {
-      setMsg('location permission denied');
-      return;
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        setMsg(Platform.OS === 'web'
+          ? 'location permission denied — allow location in the browser prompt, then try again.'
+          : 'location permission denied');
+        return;
+      }
+      const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      setCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+      setMsg(`gps: ${pos.coords.latitude.toFixed(5)}, ${pos.coords.longitude.toFixed(5)}`);
+    } catch (e: any) {
+      setMsg('could not read GPS: ' + String(e?.message ?? e));
     }
-    const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-    setCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
-    setMsg(`gps: ${pos.coords.latitude.toFixed(5)}, ${pos.coords.longitude.toFixed(5)}`);
   }
 
   async function pickPhoto() {
@@ -197,10 +203,14 @@ export function BookingScreen({ auth, onBooked }: { auth: AuthState; onBooked?: 
       // Live mode: open the Paystack checkout, then wait for the webhook.
       if (p.authorization_url) {
         setMsg('opening secure checkout…');
-        try {
-          await WebBrowser.openBrowserAsync(p.authorization_url);
-        } catch {
-          await Linking.openURL(p.authorization_url);
+        if (Platform.OS === 'web') {
+          window.open(p.authorization_url, '_blank', 'noopener');
+        } else {
+          try {
+            await WebBrowser.openBrowserAsync(p.authorization_url);
+          } catch {
+            await Linking.openURL(p.authorization_url);
+          }
         }
         setMsg('confirming payment…');
         const status = await waitForPayment(b.booking.id, auth, (n) =>

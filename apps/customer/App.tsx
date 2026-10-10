@@ -9,6 +9,7 @@ import { BookingScreen } from './src/screens/BookingScreen';
 import { JobTracking } from './src/screens/JobTracking';
 import { DisputeScreen } from './src/screens/DisputeScreen';
 import { API_BASE, TOKEN_KEY, REFRESH_TOKEN_KEY, SESSION_EXPIRED_MSG, Session, AuthState } from './src/api';
+import { registerPwa } from './src/web';
 import { theme } from './src/theme';
 
 export type RootStackParamList = {
@@ -49,6 +50,7 @@ export default function App() {
   const [lastBooking, setLastBooking] = useState<string | undefined>(undefined);
 
   useEffect(() => {
+    registerPwa();
     Promise.all([AsyncStorage.getItem(TOKEN_KEY), AsyncStorage.getItem(REFRESH_TOKEN_KEY)])
       .then(([a, r]) => {
         if (a && r) setSession({ access: a, refresh: r });

@@ -6,8 +6,13 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "scheme": "waste-customer",
+    "web": {
+      "bundler": "metro",
+      "output": "single"
+    },
     "platforms": [
-      "android"
+      "android",
+      "web"
     ],
     "android": {
       "package": "com.wastedisposal.customer",

@@ -16,7 +16,17 @@ export const app = express();
 // Behind Render's reverse proxy: trust the first hop so req.ip is the real
 // client IP (used by the admin-login rate limiter), not Render's.
 app.set('trust proxy', 1);
-app.use(cors());
+// Browser origins allowed to call the API. Comma-separated WEB_ORIGINS env
+// var (e.g. the Netlify site URL); never "*". Requests without an Origin
+// header (native apps, curl, tests) are unaffected. When unset, only local
+// dev origins are allowed so a bare deploy is not wide open.
+const WEB_ORIGINS = (process.env.WEB_ORIGINS ?? '')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+app.use(cors({
+  origin: WEB_ORIGINS.length > 0 ? WEB_ORIGINS : ['http://localhost:3001', 'http://127.0.0.1:3001'],
+}));
 // Keep the raw body so the Paystack webhook can verify the HMAC signature.
 app.use(express.json({
   verify: (req: any, _res: any, buf: Buffer) => {
