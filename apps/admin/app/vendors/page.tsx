@@ -2,7 +2,6 @@
 import { useState } from 'react';
 import { useAdminSession } from '../admin-auth';
 import AdminNav from '../admin-nav';
-const API = `${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000'}`;
 // Phase 1: vendor queue approve/reject/block. Token comes from the login session.
 type Vendor = {
   id: string;
@@ -14,7 +13,7 @@ type Vendor = {
 };
 const TABS = ['pending', 'approved', 'blocked'] as const;
 export default function Vendors() {
-  const { token, ready, logout } = useAdminSession();
+  const { token, ready, logout, authFetch } = useAdminSession();
   const [err, setErr] = useState('');
   const [loading, setLoading] = useState(false);
   const [vendors, setVendors] = useState<Vendor[]>([]);
@@ -25,9 +24,7 @@ export default function Vendors() {
     setErr('');
     setLoading(true);
     try {
-      const res = await fetch(`${API}/api/v1/admin/vendors?status=${s}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const res = await authFetch(`/api/v1/admin/vendors?status=${s}`);
       const r = await res.json();
       if (!res.ok) throw new Error(r?.error ? String(r.error) : `HTTP ${res.status}`);
       setVendors(Array.isArray(r.vendors) ? r.vendors : []);
@@ -41,9 +38,9 @@ export default function Vendors() {
     if (!token) return;
     setErr('');
     try {
-      const res = await fetch(`${API}/api/v1/admin/vendors/${id}/${action}`, {
+      const res = await authFetch(`/api/v1/admin/vendors/${id}/${action}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(action === 'reject' ? { reason: 'docs unclear' } : {}),
       });
       const r = await res.json();

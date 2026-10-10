@@ -2,7 +2,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useAdminSession } from '../admin-auth';
 import AdminNav from '../admin-nav';
-const API = `${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000'}`;
 // Dispute center: open/resolved tabs, per-dispute timeline, resolve form.
 type Dispute = {
   id: string;
@@ -19,7 +18,7 @@ type Dispute = {
 type TimelineEvent = { at?: string; recorded_at?: string; created_at?: string; from_status?: string; to_status?: string; label: string };
 const ACTIONS = ['refund_vendor', 'refund_customer', 'split'];
 export default function Disputes() {
-  const { token, ready, logout } = useAdminSession();
+  const { token, ready, logout, authFetch } = useAdminSession();
   const [tab, setTab] = useState<'open' | 'resolved'>('open');
   const [disputes, setDisputes] = useState<Dispute[]>([]);
   const [loading, setLoading] = useState(false);
@@ -33,9 +32,7 @@ export default function Disputes() {
     setLoading(true);
     setErr('');
     try {
-      const res = await fetch(`${API}/api/v1/admin/disputes?status=${s}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const res = await authFetch(`/api/v1/admin/disputes?status=${s}`);
       const r = await res.json();
       if (!res.ok) throw new Error(r?.error ? String(r.error) : `HTTP ${res.status}`);
       setDisputes(Array.isArray(r.disputes) ? r.disputes : []);
@@ -44,7 +41,7 @@ export default function Disputes() {
     } finally {
       setLoading(false);
     }
-  }, [token]);
+  }, [token, authFetch]);
 
   useEffect(() => {
     if (token) load('open');
@@ -68,9 +65,7 @@ export default function Disputes() {
     setLoadingTl(d.id);
     setErr('');
     try {
-      const res = await fetch(`${API}/api/v1/admin/jobs/${d.booking_id}/timeline`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const res = await authFetch(`/api/v1/admin/jobs/${d.booking_id}/timeline`);
       const r = await res.json();
       if (!res.ok) throw new Error(r?.error ? String(r.error) : `HTTP ${res.status}`);
       const events: TimelineEvent[] = [
@@ -91,9 +86,9 @@ export default function Disputes() {
     const f = forms[d.id] ?? { action: 'refund_customer', note: '', penalty: '' };
     setErr('');
     try {
-      const res = await fetch(`${API}/api/v1/admin/disputes/${d.id}/resolve`, {
+      const res = await authFetch(`/api/v1/admin/disputes/${d.id}/resolve`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action: f.action,
           note: f.note || undefined,

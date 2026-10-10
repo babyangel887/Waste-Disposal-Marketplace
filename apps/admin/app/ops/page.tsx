@@ -2,16 +2,13 @@
 import { useState } from 'react';
 import { useAdminSession } from '../admin-auth';
 import AdminNav from '../admin-nav';
-const API = `${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000'}`;
 // Phase 5: ops readiness — counts + mocked-gateway reconciliation + waitlist size.
 export default function Ops() {
-  const { token, ready, logout } = useAdminSession();
+  const { token, ready, logout, authFetch } = useAdminSession();
   const [out, setOut] = useState('');
   async function load(path: string) {
     if (!token) return;
-    const r = await fetch(`${API}${path}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    }).then((x) => x.json());
+    const r = await authFetch(path).then((x) => x.json());
     setOut(JSON.stringify(r, null, 2));
   }
   if (!ready || !token) return <main style={{ padding: 24 }}>Loading…</main>;

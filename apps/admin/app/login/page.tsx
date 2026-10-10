@@ -1,8 +1,8 @@
 'use client';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { storeAdminToken } from '../admin-auth';
-// Admin password login. The token goes to sessionStorage and the user is
+import { SESSION_EXPIRED_MSG, storeAdminSession, takeExpiredFlag } from '../admin-auth';
+// Admin password login. Both tokens go to sessionStorage and the user is
 // sent to /vendors; the password lives only in this form's state and is
 // never logged or stored.
 export default function Login() {
@@ -10,6 +10,9 @@ export default function Login() {
   const [phone, setPhone] = useState('+234');
   const [password, setPassword] = useState('');
   const [out, setOut] = useState('');
+  useEffect(() => {
+    if (takeExpiredFlag()) setOut(SESSION_EXPIRED_MSG);
+  }, []);
   async function login() {
     setOut('');
     try {
@@ -22,11 +25,11 @@ export default function Login() {
         return;
       }
       const r = await res.json();
-      if (!r.access_token) {
+      if (!r.access_token || !r.refresh_token) {
         setOut('Login failed');
         return;
       }
-      storeAdminToken(r.access_token);
+      storeAdminSession(r.access_token, r.refresh_token);
       router.push('/vendors');
     } catch {
       setOut('Login failed');
