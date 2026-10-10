@@ -6,8 +6,13 @@
     "orientation": "portrait",
     "scheme": "waste-vendor",
     "platforms": [
-      "android"
+      "android",
+      "web"
     ],
+    "web": {
+      "bundler": "metro",
+      "output": "single"
+    },
     "android": {
       "package": "com.wastedisposal.vendor",
       "versionCode": 1,

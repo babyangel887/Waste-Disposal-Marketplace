@@ -13,6 +13,7 @@ export function JobScreen({ auth, bookingId, onDone }: {
   const [msg, setMsg] = useState('');
   const [busy, setBusy] = useState(false);
   const [pingMsg, setPingMsg] = useState('');
+  const [gpsDenied, setGpsDenied] = useState(false);
   const pingTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const load = useCallback(async () => {
@@ -57,7 +58,12 @@ export function JobScreen({ auth, bookingId, onDone }: {
     async function ping() {
       try {
         const { status } = await Location.requestForegroundPermissionsAsync();
-        if (status !== 'granted' || stopped) return;
+        if (stopped) return;
+        if (status !== 'granted') {
+          setGpsDenied(true);
+          return;
+        }
+        setGpsDenied(false);
         const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
         if (stopped) return;
         const r: any = await apiFetch(`${API_BASE}/api/v1/tracking/ping`, {
@@ -101,7 +107,10 @@ export function JobScreen({ auth, bookingId, onDone }: {
         <Button title="Loading" disabled={busy || status !== 'arrived'} onPress={() => { transition('loading'); }} />
         <Button title="Complete" disabled={busy || !(status === 'arrived' || status === 'loading')} onPress={() => { transition('complete'); }} />
       </View>
-      {status === 'en_route' ? <Text style={theme.msg}>Sending GPS location…{pingMsg ? ` ${pingMsg}` : ''}</Text> : null}
+      {status === 'en_route' && !gpsDenied ? <Text style={theme.msg}>Sending GPS location…{pingMsg ? ` ${pingMsg}` : ''}</Text> : null}
+      {status === 'en_route' && gpsDenied ? (
+        <Text style={theme.msg}>Location unavailable — allow location access in the browser or system settings to send live updates. Status buttons still work.</Text>
+      ) : null}
       {busy ? <ActivityIndicator style={{ marginTop: 12 }} /> : null}
       {!!msg && <Text style={theme.msg}>{msg}</Text>}
       {status === 'completed' ? (
