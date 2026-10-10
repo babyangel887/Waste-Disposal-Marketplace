@@ -59,16 +59,39 @@ export function BookingScreen({ token, onBooked }: { token: string; onBooked?: (
 
   async function pickPhoto() {
     setMsg('');
-    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!perm.granted) {
-      setMsg('photo permission denied');
+    // Android 13+ uses READ_MEDIA_IMAGES (declared in app.json); expo maps
+    // this call to the right permission per OS version. Check first so we
+    // can tell "denied forever" (open Settings) apart from "just denied".
+    try {
+      const current = await ImagePicker.getMediaLibraryPermissionsAsync();
+      let granted = current.granted;
+      if (!granted && current.canAskAgain !== false) {
+        const asked = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        granted = asked.granted;
+      }
+      if (!granted) {
+        setMsg('photo permission denied — enable Photos access for this app in system Settings, then try again.');
+        return;
+      }
+    } catch (e: any) {
+      setMsg('could not check photo permission: ' + String(e?.message ?? e));
       return;
     }
-    const res = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      quality: 0.7,
-    });
-    if (res.canceled || !res.assets?.[0]) return;
+    let res: ImagePicker.ImagePickerResult;
+    try {
+      res = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsMultipleSelection: false,
+        quality: 0.7,
+      });
+    } catch (e: any) {
+      setMsg('could not open photo library: ' + String(e?.message ?? e));
+      return;
+    }
+    if (res.canceled || !res.assets?.[0]) {
+      setMsg('No photo selected.');
+      return;
+    }
     const asset = res.assets[0];
     if (photoKeys.length >= 5) {
       setMsg('max 5 photos');
