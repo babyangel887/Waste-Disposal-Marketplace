@@ -1,6 +1,7 @@
 import './env.js';
 import { get, run } from './db.js';
 import { hashPassword } from './password.js';
+import { normalizePhone } from './phone.js';
 import crypto from 'node:crypto';
 
 // Idempotent admin seeder, fully env-driven:
@@ -10,9 +11,8 @@ import crypto from 'node:crypto';
 // Safe to run repeatedly: existing admins are updated in place, never duplicated.
 // The password value itself is never logged.
 export async function ensureSeedAdmin(): Promise<{ created: boolean; phone: string }> {
-  const phone = (process.env.ADMIN_PHONE ?? '+2348000000001').replace(/\s/g, '');
+  const phone = normalizePhone(process.env.ADMIN_PHONE ?? '+2348000000001');
   const password = process.env.ADMIN_PASSWORD ?? '';
-  if (!/^\+?[0-9]{7,15}$/.test(phone)) throw new Error('ADMIN_PHONE must look like +2348000000001');
   if (password.length < 12) throw new Error('ADMIN_PASSWORD must be set and at least 12 chars');
   const name = process.env.ADMIN_NAME ?? 'Ops Admin';
   const now = new Date().toISOString();

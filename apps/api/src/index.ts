@@ -7,6 +7,7 @@ import crypto from 'node:crypto';
 import { get, all, run } from './db.js';
 import { requestOtp, verifyOtp } from './otp.js';
 import { verifyPassword } from './password.js';
+import { normalizePhone } from './phone.js';
 import { checkOtpRequest, clearAdminFailures, isIpBlocked, recordAdminFailure } from './rate-limit.js';
 import { signAccess, signRefresh, verifyToken } from './jwt.js';
 import { estimatePrice, PILOT_LGAS, WASTE_CATEGORIES, PRIVACY_POLICY_VERSION } from '@waste/shared';
@@ -34,7 +35,7 @@ app.post('/api/v1/auth/request-otp', ah(async (req: any, res: any) => {
   try {
     const { phone } = req.body ?? {};
     if (!phone) return res.status(400).json({ error: 'phone required' });
-    const cleanPhone = String(phone).replace(/\s/g, '');
+    const cleanPhone = normalizePhone(String(phone));
     const existing = (await get('SELECT * FROM users WHERE phone = ?', cleanPhone)) as any;
     // Admins can only use password login — never issue them OTP codes,
     // especially in mock mode where the code is returned in the response.
@@ -57,7 +58,7 @@ app.post('/api/v1/auth/verify-otp', ah(async (req: any, res: any) => {
     if (!phone || !code) return res.status(400).json({ error: 'phone + code required' });
     await verifyOtp(String(phone), String(code));
 
-    const cleanPhone = String(phone).replace(/\s/g, '');
+    const cleanPhone = normalizePhone(String(phone));
     let user = (await get('SELECT * FROM users WHERE phone = ?', cleanPhone)) as any;
     if (!user) {
       const requestedRole = role === 'vendor' ? 'vendor' : 'customer';
@@ -94,7 +95,12 @@ app.post('/api/v1/auth/verify-otp', ah(async (req: any, res: any) => {
 app.post('/api/v1/auth/admin-login', ah(async (req: any, res: any) => {
   const { phone, password } = req.body ?? {};
   if (!phone || !password) return res.status(400).json({ error: 'phone + password required' });
-  const cleanPhone = String(phone).replace(/\s/g, '');
+  let cleanPhone: string;
+  try {
+    cleanPhone = normalizePhone(String(phone));
+  } catch {
+    return res.status(401).json({ error: 'invalid credentials' });
+  }
   const ip = req.ip ?? 'unknown';
   if (isIpBlocked(ip)) {
     return res.status(429).json({ error: 'Too many attempts, try again later' });

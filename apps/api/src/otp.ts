@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { get, run } from './db.js';
+import { normalizePhone } from './phone.js';
 
 const OTP_TTL_SEC = Number(process.env.OTP_TTL_SEC ?? 300);
 
@@ -36,8 +37,7 @@ async function sendViaTermii(phone: string, code: string) {
 }
 
 export async function requestOtp(phone: string) {
-  const clean = phone.replace(/\s/g, '');
-  if (!/^\+?[0-9]{7,15}$/.test(clean)) throw new Error('invalid phone format');
+  const clean = normalizePhone(phone);
 
   const now = new Date();
   const existing = (await get('SELECT * FROM otp_codes WHERE phone = ?', clean)) as any;
@@ -70,7 +70,7 @@ export async function requestOtp(phone: string) {
 }
 
 export async function verifyOtp(phone: string, code: string) {
-  const clean = phone.replace(/\s/g, '');
+  const clean = normalizePhone(phone);
   const row = (await get('SELECT * FROM otp_codes WHERE phone = ?', clean)) as any;
   if (!row) throw new Error('no OTP requested for this phone');
   if (new Date(row.expires_at).getTime() < Date.now()) throw new Error('OTP expired');
