@@ -249,6 +249,22 @@ let pool: Pool | null = null;
 let ready: Promise<void> | null = null;
 let initializing = false;
 
+// Hosts like Render's external Postgres endpoints require TLS. Enable it
+// when the URL host ends in .render.com or PGSSLMODE=require is set.
+// Only the hostname is inspected — the URL and password are never logged.
+export function pgSslOptions(
+  url: string = process.env.DATABASE_URL ?? '',
+  sslmode: string | undefined = process.env.PGSSLMODE
+): { ssl: { rejectUnauthorized: boolean } } | Record<string, never> {
+  if (sslmode === 'require') return { ssl: { rejectUnauthorized: false } };
+  try {
+    if (new URL(url).hostname.endsWith('.render.com')) return { ssl: { rejectUnauthorized: false } };
+  } catch {
+    // Not a parseable URL (e.g. sqlite path) — plain connection.
+  }
+  return {};
+}
+
 async function init(): Promise<void> {
   initializing = true;
   try {
@@ -266,7 +282,7 @@ async function init(): Promise<void> {
     const ucols = (sqlite.prepare('PRAGMA table_info(users)').all() as any[]).map((c) => c.name);
     if (!ucols.includes('password_hash')) sqlite.exec('ALTER TABLE users ADD COLUMN password_hash TEXT');
   } else {
-    pool = new Pool({ connectionString: DATABASE_URL });
+    pool = new Pool({ connectionString: DATABASE_URL, ...pgSslOptions() });
     for (const stmt of DDL) await pool.query(stmt);
     await pool.query('ALTER TABLE bookings ADD COLUMN IF NOT EXISTS vendor_id TEXT');
     await pool.query('ALTER TABLE bookings ADD COLUMN IF NOT EXISTS arrived_at TEXT');

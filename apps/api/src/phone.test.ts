@@ -5,9 +5,25 @@ const savedPass = process.env.ADMIN_PASSWORD;
 process.env.ADMIN_PHONE = '080799' + String(Math.floor(Math.random() * 90000) + 10000);
 process.env.ADMIN_PASSWORD = 'phone-test-pass-1234';
 import { app } from './index.js';
-import { get } from './db.js';
+import { get, pgSslOptions } from './db.js';
 import { ensureSeedAdmin } from './seed-admin.js';
 import { normalizePhone } from './phone.js';
+
+// SSL decision unit checks: Render external hosts and PGSSLMODE=require get
+// TLS; plain/local URLs do not. Args passed explicitly — env untouched.
+const sslCases: [string, string | undefined, boolean][] = [
+  ['postgres://u:p@dpg-abc-xyz-a.oregon-postgres.render.com:5432/db', undefined, true],
+  ['postgresql://u:p@localhost:5432/db', undefined, false],
+  ['postgresql://u:p@localhost:5432/db', 'require', true],
+  ['postgres://u:p@db.internal:5432/db', 'disable', false],
+  ['file:./dev.db', undefined, false],
+  ['not-a-url', undefined, false],
+];
+for (const [url, mode, wantSsl] of sslCases) {
+  const got = 'ssl' in pgSslOptions(url, mode);
+  if (got !== wantSsl) throw new Error(`ASSERT: pgSslOptions(${url}, ${mode}) ssl=${got}, want ${wantSsl}`);
+  console.log('ok -', `ssl ${wantSsl ? 'on' : 'off'} for ${url.split('@').pop()}`);
+}
 
 // Pure unit checks (no server needed).
 const unit: [string, string][] = [
