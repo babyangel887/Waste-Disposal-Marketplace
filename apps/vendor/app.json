@@ -5,7 +5,9 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "scheme": "waste-vendor",
-    "platforms": ["android"],
+    "platforms": [
+      "android"
+    ],
     "android": {
       "package": "com.wastedisposal.vendor",
       "versionCode": 1,
@@ -19,7 +21,18 @@
     },
     "plugins": [
       "expo-asset",
-      "expo-font"
-    ]
+      "expo-font",
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Allow waste pickup location for driver arrival."
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "e0907680-d043-4ee3-91df-6a9a328f179c"
+      }
+    },"owner": "babyangel887"
   }
 }

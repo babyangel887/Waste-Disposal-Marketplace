@@ -8,6 +8,7 @@ import { OtpScreen } from './src/screens/OtpScreen';
 import { OnboardingScreen } from './src/screens/OnboardingScreen';
 import { OffersScreen } from './src/screens/OffersScreen';
 import { EarningsScreen } from './src/screens/EarningsScreen';
+import { JobScreen } from './src/screens/JobScreen';
 import { API_BASE, TOKEN_KEY, REFRESH_TOKEN_KEY, SESSION_EXPIRED_MSG, Session, AuthState, apiFetch } from './src/api';
 import { theme } from './src/theme';
 
@@ -17,6 +18,7 @@ export type RootStackParamList = {
   Pending: undefined;
   Home: undefined;
   Offers: undefined;
+  Job: { bookingId: string };
   Earnings: undefined;
 };
 
@@ -207,9 +209,16 @@ export default function App() {
                 {({ navigation }: any) => <HomeScreen navigation={navigation} onLogout={logout} />}
               </Stack.Screen>
               <Stack.Screen name="Offers" options={{ title: 'Job offers' }}>
-                {() => (
+                {({ navigation }: any) => (
                   <ScrollView style={theme.screen}>
-                    <OffersScreen auth={auth} />
+                    <OffersScreen auth={auth} onAccepted={(bookingId) => navigation.navigate('Job', { bookingId })} />
+                  </ScrollView>
+                )}
+              </Stack.Screen>
+              <Stack.Screen name="Job" options={{ title: 'Active job' }}>
+                {({ navigation, route }: any) => (
+                  <ScrollView style={theme.screen}>
+                    <JobScreen auth={auth} bookingId={route.params.bookingId} onDone={() => navigation.navigate('Offers')} />
                   </ScrollView>
                 )}
               </Stack.Screen>
