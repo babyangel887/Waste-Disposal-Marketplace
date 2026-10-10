@@ -1,6 +1,7 @@
 'use client';
 import { useState } from 'react';
 import { useAdminSession } from '../admin-auth';
+import AdminNav from '../admin-nav';
 const API = `${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000'}`;
 // Phase 5: ops readiness — counts + mocked-gateway reconciliation + waitlist size.
 export default function Ops() {
@@ -16,10 +17,8 @@ export default function Ops() {
   if (!ready || !token) return <main style={{ padding: 24 }}>Loading…</main>;
   return (
     <main style={{ padding: 24 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <h1>Ops readiness</h1>
-        <button onClick={logout}>Log out</button>
-      </div>
+      <AdminNav onLogout={logout} />
+      <h1>Ops readiness</h1>
       <div>
         <button onClick={() => load('/api/v1/admin/ops')}>Reconciliation</button>
         <button onClick={() => load('/api/v1/admin/waitlist')}>Waitlist</button>

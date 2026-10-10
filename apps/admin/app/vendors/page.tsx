@@ -1,6 +1,7 @@
 'use client';
 import { useState } from 'react';
 import { useAdminSession } from '../admin-auth';
+import AdminNav from '../admin-nav';
 const API = `${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000'}`;
 // Phase 1: vendor queue approve/reject/block. Token comes from the login session.
 type Vendor = {
@@ -11,47 +12,66 @@ type Vendor = {
   approved_status?: string;
   blocked?: boolean | number;
 };
+const TABS = ['pending', 'approved', 'blocked'] as const;
 export default function Vendors() {
   const { token, ready, logout } = useAdminSession();
-  const [out, setOut] = useState('');
+  const [err, setErr] = useState('');
+  const [loading, setLoading] = useState(false);
   const [vendors, setVendors] = useState<Vendor[]>([]);
-  const [status, setStatus] = useState('pending');
-  async function load(s = status) {
+  const [status, setStatus] = useState<(typeof TABS)[number]>('pending');
+  async function load(s: (typeof TABS)[number] = status) {
     if (!token) return;
     setStatus(s);
-    setOut('');
-    const r = await fetch(`${API}/api/v1/admin/vendors?status=${s}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    }).then((x) => x.json());
-    setVendors(Array.isArray(r.vendors) ? r.vendors : []);
-    setOut(JSON.stringify(r, null, 2));
+    setErr('');
+    setLoading(true);
+    try {
+      const res = await fetch(`${API}/api/v1/admin/vendors?status=${s}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const r = await res.json();
+      if (!res.ok) throw new Error(r?.error ? String(r.error) : `HTTP ${res.status}`);
+      setVendors(Array.isArray(r.vendors) ? r.vendors : []);
+    } catch (e: any) {
+      setErr('load failed: ' + String(e?.message ?? e));
+    } finally {
+      setLoading(false);
+    }
   }
   async function act(id: string, action: string) {
     if (!token) return;
-    setOut('');
-    const r = await fetch(`${API}/api/v1/admin/vendors/${id}/${action}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify(action === 'reject' ? { reason: 'docs unclear' } : {}),
-    }).then((x) => x.json());
-    setOut(JSON.stringify(r, null, 2));
-    await load();
+    setErr('');
+    try {
+      const res = await fetch(`${API}/api/v1/admin/vendors/${id}/${action}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify(action === 'reject' ? { reason: 'docs unclear' } : {}),
+      });
+      const r = await res.json();
+      if (!res.ok) throw new Error(r?.error ? String(r.error) : `HTTP ${res.status}`);
+      await load();
+    } catch (e: any) {
+      setErr('action failed: ' + String(e?.message ?? e));
+    }
   }
   if (!ready || !token) return <main style={{ padding: 24 }}>Loading…</main>;
   return (
-    <main style={{ padding: 24 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <h1>Vendors queue</h1>
-        <button onClick={logout}>Log out</button>
+    <main style={{ padding: 24, maxWidth: 900 }}>
+      <AdminNav onLogout={logout} />
+      <h1>Vendors queue</h1>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+        {TABS.map((t) => (
+          <button key={t} onClick={() => load(t)} disabled={status === t}>
+            {t[0].toUpperCase() + t.slice(1)}
+          </button>
+        ))}
       </div>
-      <div>
-        <button onClick={() => load('pending')}>Pending</button>
-        <button onClick={() => load('approved')}>Approved</button>
-        <button onClick={() => load('blocked')}>Blocked</button>
-      </div>
+      {loading ? <p>Loading…</p> : null}
+      {!!err && <p style={{ color: '#b3261e' }}>{err}</p>}
+      {!loading && vendors.length === 0 ? <p>No {status} vendors.</p> : null}
       {vendors.map((v) => (
         <div key={v.id} style={{ border: '1px solid #ccc', borderRadius: 8, padding: 12, margin: '12px 0' }}>
-          <div><strong>{v.business_name ?? v.id}</strong> — {v.phone} {v.name ? `(${v.name})` : ''}</div>
+          <div><strong>{v.business_name ?? v.id}</strong></div>
+          <div>Phone: {v.phone}{v.name ? ` (${v.name})` : ''}</div>
           <div>Status: {v.approved_status}{v.blocked ? ' · blocked' : ''}</div>
           <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
             <button onClick={() => act(v.id, 'approve')}>Approve</button>
@@ -61,7 +81,6 @@ export default function Vendors() {
           </div>
         </div>
       ))}
-      <pre>{out}</pre>
     </main>
   );
 }

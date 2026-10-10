@@ -2,6 +2,7 @@
 'use client';
 import { useState } from 'react';
 import { useAdminSession } from '../admin-auth';
+import AdminNav from '../admin-nav';
 
 export default function AdminTools() {
   const { token, ready, logout } = useAdminSession();
@@ -16,10 +17,8 @@ export default function AdminTools() {
   if (!ready || !token) return <main style={{ padding: 24 }}>Loading…</main>;
   return (
     <main style={{ padding: 24 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <h1>Admin tools</h1>
-        <button onClick={logout}>Log out</button>
-      </div>
+      <AdminNav onLogout={logout} />
+      <h1>Admin tools</h1>
       <p>Pilot: Eti-Osa, Ikeja.</p>
       <button onClick={check}>Check overview</button>
       <pre>{out}</pre>

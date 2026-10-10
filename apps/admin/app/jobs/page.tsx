@@ -1,6 +1,7 @@
 'use client';
 import { useState } from 'react';
 import { useAdminSession } from '../admin-auth';
+import AdminNav from '../admin-nav';
 const API = `${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000'}`;
 // Phase 1 stub: empty list with Phase-3 shape. Full map lands in Phase 3.
 export default function Jobs() {
@@ -16,10 +17,8 @@ export default function Jobs() {
   if (!ready || !token) return <main style={{ padding: 24 }}>Loading…</main>;
   return (
     <main style={{ padding: 24 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <h1>Active jobs (stub)</h1>
-        <button onClick={logout}>Log out</button>
-      </div>
+      <AdminNav onLogout={logout} />
+      <h1>Active jobs (stub)</h1>
       <button onClick={load}>Load</button>
       <pre>{out}</pre>
     </main>

@@ -1072,9 +1072,10 @@ app.get('/api/v1/disputes/mine', auth, ah(async (req: any, res: any) => {
 
 app.get('/api/v1/admin/disputes', auth, ah(requireAdmin), ah(async (req: any, res: any) => {
   const status = req.query.status ? String(req.query.status) : 'open';
+  const select = 'SELECT d.*, u.phone AS raised_by_phone FROM disputes d LEFT JOIN users u ON u.id = d.raised_by';
   const rows = (status === 'all'
-    ? await all('SELECT * FROM disputes ORDER BY created_at DESC')
-    : await all('SELECT * FROM disputes WHERE status=? ORDER BY created_at DESC', status)) as any[];
+    ? await all(`${select} ORDER BY d.created_at DESC`)
+    : await all(`${select} WHERE d.status=? ORDER BY d.created_at DESC`, status)) as any[];
   res.json({ disputes: rows });
 }));
 
