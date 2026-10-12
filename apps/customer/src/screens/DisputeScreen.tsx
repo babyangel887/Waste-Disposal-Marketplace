@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { View, Text, TextInput, Button, ActivityIndicator } from 'react-native';
 import { API_BASE, AuthState, apiFetch } from '../api';
+import { describeDispute } from '../disputeText';
 import { theme } from '../theme';
 
 // Same API call: POST /disputes { booking_id, category, notes }.
@@ -10,6 +11,24 @@ export function DisputeScreen({ auth, bookingId: initialId }: { auth: AuthState;
   const [notes, setNotes] = useState('');
   const [msg, setMsg] = useState('');
   const [busy, setBusy] = useState(false);
+  const [mine, setMine] = useState<any[]>([]);
+  const [listMsg, setListMsg] = useState('');
+
+  useEffect(() => {
+    let gone = false;
+    (async () => {
+      try {
+        const r: any = await apiFetch(`${API_BASE}/api/v1/disputes/mine`, undefined, auth).then((x) => x.json());
+        if (gone) return;
+        if (Array.isArray(r?.disputes)) setMine(r.disputes);
+        else setListMsg(r?.error ? String(r.error) : 'could not load disputes');
+      } catch (e: any) {
+        if (!gone) setListMsg('could not load disputes: ' + String(e?.message ?? e));
+      }
+    })();
+    return () => { gone = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function raise() {
     if (!bookingId.trim()) {
@@ -46,6 +65,16 @@ export function DisputeScreen({ auth, bookingId: initialId }: { auth: AuthState;
       </View>
       {busy ? <ActivityIndicator style={{ marginTop: 12 }} /> : null}
       {!!msg && <Text style={theme.msg}>{msg}</Text>}
+      <Text style={[theme.title, { marginTop: 16 }]}>My disputes</Text>
+      {!!listMsg && <Text style={theme.msg}>{listMsg}</Text>}
+      {mine.length === 0 && !listMsg ? <Text style={theme.msg}>No disputes yet.</Text> : null}
+      {mine.map((d: any) => (
+        <View key={d.id} style={[theme.card, { marginTop: 8 }]}>
+          <Text style={theme.label}>{d.category} · {d.status}</Text>
+          <Text style={theme.msg}>Booking: {String(d.booking_id).slice(0, 8)}… · {new Date(d.created_at).toLocaleString()}</Text>
+          <Text style={theme.msg}>{describeDispute(d)}</Text>
+        </View>
+      ))}
     </View>
   );
 }

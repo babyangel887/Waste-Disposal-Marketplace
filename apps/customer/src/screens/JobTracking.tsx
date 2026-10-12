@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { View, Text, TextInput, Button, ActivityIndicator, AppState, Linking } from 'react-native';
 import { API_BASE, AuthState, apiFetch } from '../api';
 import { theme } from '../theme';
+import { describeDispute } from '../disputeText';
 import { DriverMap, mapsLink } from './DriverMap';
 
 const TERMINAL = ['completed', 'cancelled', 'disputed'];
@@ -44,10 +45,21 @@ export function JobTracking({ auth, bookingId: initialId, onDispute }: {
   const [manualId, setManualId] = useState('');
   const [detail, setDetail] = useState<any>(null);
   const [pos, setPos] = useState<{ lat: number; lng: number; recorded_at: string } | null>(null);
+  const [myDispute, setMyDispute] = useState<any>(null);
   const [msg, setMsg] = useState('');
   const [busy, setBusy] = useState(false);
   const authRef = useRef(auth);
   authRef.current = auth;
+
+  async function fetchDispute(id: string) {
+    try {
+      const r: any = await apiFetch(`${API_BASE}/api/v1/disputes/mine`, undefined, authRef.current).then((x) => x.json());
+      const found = Array.isArray(r?.disputes) ? r.disputes.find((d: any) => d.booking_id === id) : null;
+      setMyDispute(found ?? null);
+    } catch {
+      // dispute status is informational — never break the screen over it
+    }
+  }
 
   // A fresh booking (e.g. just paid) takes over the screen automatically.
   useEffect(() => {
@@ -94,19 +106,22 @@ export function JobTracking({ auth, bookingId: initialId, onDispute }: {
     if (!selectedId) {
       setDetail(null);
       setPos(null);
+      setMyDispute(null);
       setMsg('');
       return;
     }
     let stopped = false;
     let timer: ReturnType<typeof setInterval> | null = null;
+    const id: string = selectedId;
     async function tick() {
       if (stopped) return;
       try {
-        const r: any = await apiFetch(`${API_BASE}/api/v1/bookings/${selectedId}`, undefined, authRef.current).then((x) => x.json());
+        const r: any = await apiFetch(`${API_BASE}/api/v1/bookings/${id}`, undefined, authRef.current).then((x) => x.json());
         if (stopped) return;
         if (r?.booking) {
           setDetail(r);
           setMsg('');
+          fetchDispute(id);
           if (TERMINAL.includes(r.booking.status)) stop();
         } else {
           setMsg(r?.error ? String(r.error) : 'watch failed');
@@ -177,6 +192,7 @@ export function JobTracking({ auth, bookingId: initialId, onDispute }: {
       if (r?.booking) {
         setDetail(r);
         setMsg('');
+        fetchDispute(selectedId);
       } else {
         setMsg(r?.error ? String(r.error) : 'refresh failed');
       }
@@ -231,7 +247,10 @@ export function JobTracking({ auth, bookingId: initialId, onDispute }: {
           </View>
           {busy ? <ActivityIndicator style={{ marginTop: 12 }} /> : null}
           {!!detail?.booking && !isCompleted ? (
-            <Text style={theme.msg}>{statusLine(detail.booking.status)} — watching for updates…</Text>
+            <Text style={theme.msg}>Status: {detail.booking.status} — watching for updates…</Text>
+          ) : null}
+          {!!myDispute && !isCompleted ? (
+            <Text style={theme.msg}>{describeDispute(myDispute)}</Text>
           ) : null}
           {!!msg && <Text style={theme.msg}>{msg}</Text>}
 
@@ -273,6 +292,9 @@ export function JobTracking({ auth, bookingId: initialId, onDispute }: {
               <Text style={theme.label}>
                 Completed: {new Date(detail.booking.updated_at).toLocaleString()}
               </Text>
+              {!!myDispute && (
+                <Text style={theme.label}>{describeDispute(myDispute)}</Text>
+              )}
               <View style={theme.buttonRow}>
                 <Button title="Raise dispute" onPress={() => onDispute?.(detail.booking.id)} />
               </View>
