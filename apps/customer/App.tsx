@@ -128,9 +128,13 @@ export default function App() {
                 )}
               </Stack.Screen>
               <Stack.Screen name="Tracking" options={{ title: 'Track driver' }} initialParams={{ bookingId: lastBooking }}>
-                {() => (
+                {({ navigation }: any) => (
                   <View style={theme.screen}>
-                    <JobTracking auth={auth} bookingId={lastBooking} />
+                    <JobTracking
+                      auth={auth}
+                      bookingId={lastBooking}
+                      onDispute={(id) => navigation.navigate('Dispute', { bookingId: id })}
+                    />
                   </View>
                 )}
               </Stack.Screen>
