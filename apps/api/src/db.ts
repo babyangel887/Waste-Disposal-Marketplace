@@ -230,6 +230,7 @@ const DDL = [
     provider TEXT NOT NULL,
     transfer_ref TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'completed',
+    needs_manual_reversal BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TEXT NOT NULL
   )`,
   `CREATE TABLE IF NOT EXISTS otp_sends (
@@ -281,12 +282,15 @@ async function init(): Promise<void> {
     if (!cols.includes('arrived_at')) sqlite.exec('ALTER TABLE bookings ADD COLUMN arrived_at TEXT');
     const ucols = (sqlite.prepare('PRAGMA table_info(users)').all() as any[]).map((c) => c.name);
     if (!ucols.includes('password_hash')) sqlite.exec('ALTER TABLE users ADD COLUMN password_hash TEXT');
+    const pcols = (sqlite.prepare('PRAGMA table_info(payouts)').all() as any[]).map((c) => c.name);
+    if (!pcols.includes('needs_manual_reversal')) sqlite.exec('ALTER TABLE payouts ADD COLUMN needs_manual_reversal BOOLEAN NOT NULL DEFAULT FALSE');
   } else {
     pool = new Pool({ connectionString: DATABASE_URL, ...pgSslOptions() });
     for (const stmt of DDL) await pool.query(stmt);
     await pool.query('ALTER TABLE bookings ADD COLUMN IF NOT EXISTS vendor_id TEXT');
     await pool.query('ALTER TABLE bookings ADD COLUMN IF NOT EXISTS arrived_at TEXT');
     await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT');
+    await pool.query('ALTER TABLE payouts ADD COLUMN IF NOT EXISTS needs_manual_reversal BOOLEAN NOT NULL DEFAULT FALSE');
   }
   // Seed DB-backed pricing from shared defaults (DB is authoritative).
   for (const c of WASTE_CATEGORIES) {

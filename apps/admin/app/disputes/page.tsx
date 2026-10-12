@@ -26,6 +26,32 @@ export default function Disputes() {
   const [timelines, setTimelines] = useState<Record<string, TimelineEvent[]>>({});
   const [loadingTl, setLoadingTl] = useState<string | null>(null);
   const [forms, setForms] = useState<Record<string, { action: string; note: string; penalty: string }>>({});
+  const [results, setResults] = useState<Record<string, string>>({});
+
+  function describeResolution(resJson: string | null | undefined): string | null {
+    try {
+      const r = JSON.parse(resJson ?? '');
+      const m = r?.money ?? {};
+      if (m.requires_manual_reversal) return 'Refund requires manual reversal in the Paystack dashboard.';
+      if (m.moved && r.action === 'refund_customer') return `Customer refunded ₦${(m.refund_ngn ?? 0).toLocaleString()}.`;
+      if (m.moved && r.action === 'refund_vendor') return `Paid out to vendor (₦${(m.vendor_payout_ngn ?? 0).toLocaleString()}).`;
+      if (m.moved) return `Split — vendor ₦${(m.vendor_payout_ngn ?? 0).toLocaleString()}, customer refund ₦${(m.refund_ngn ?? 0).toLocaleString()}.`;
+      return 'Resolved with no money moved.';
+    } catch {
+      return null;
+    }
+  }
+
+  function describeResolveResponse(r: any): string {
+    if (r?.requires_manual_reversal) {
+      return r?.message ? String(r.message) : 'Refund requires manual reversal in the Paystack dashboard.';
+    }
+    const m = r?.money ?? {};
+    if (m.moved && m.refund_ngn != null && m.vendor_payout_ngn == null) return `Resolved: customer refunded ₦${Number(m.refund_ngn).toLocaleString()}.`;
+    if (m.moved && m.vendor_payout_ngn != null && m.refund_ngn == null) return `Resolved: paid out to vendor (₦${Number(m.vendor_payout_ngn).toLocaleString()}).`;
+    if (m.moved) return 'Resolved: money moved (see history).';
+    return 'Resolved: no money moved.';
+  }
 
   const load = useCallback(async (s: 'open' | 'resolved') => {
     if (!token) return;
@@ -97,6 +123,7 @@ export default function Disputes() {
       });
       const r = await res.json();
       if (!res.ok) throw new Error(r?.error ? String(r.error) : `HTTP ${res.status}`);
+      setResults((prev) => ({ ...prev, [d.id]: describeResolveResponse(r) }));
       await load(tab);
     } catch (e: any) {
       setErr('resolve failed: ' + String(e?.message ?? e));
@@ -130,7 +157,11 @@ export default function Disputes() {
             <div>Booking: {d.booking_id}</div>
             <div>Raised by: {d.raised_by_phone ?? d.raised_by}</div>
             <div>Created: {new Date(d.created_at).toLocaleString()}</div>
-            {!!d.resolution && <div>Resolution: {d.resolution}</div>}
+            {!!results[d.id] && <div><strong>{results[d.id]}</strong></div>}
+            {(() => {
+              const desc = d.status !== 'open' ? describeResolution(d.resolution) : null;
+              return desc ? <div>Outcome: {desc}</div> : null;
+            })()}
             <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
               <button onClick={() => viewTimeline(d)} disabled={loadingTl === d.id}>
                 {timelines[d.booking_id] ? 'Hide timeline' : 'View timeline'}

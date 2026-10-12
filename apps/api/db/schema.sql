@@ -246,6 +246,7 @@ CREATE TABLE IF NOT EXISTS payouts (
   provider TEXT NOT NULL,
   transfer_ref TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'completed',
+  needs_manual_reversal BOOLEAN NOT NULL DEFAULT FALSE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 

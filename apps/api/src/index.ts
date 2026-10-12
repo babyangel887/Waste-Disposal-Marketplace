@@ -1,5 +1,5 @@
 import './env.js';
-import { initializeTransaction, isPaystackLive, placeholderEmail, verifyWebhookSignature } from './paystack.js';
+import { createRefund, initializeTransaction, isPaystackLive, placeholderEmail, verifyWebhookSignature } from './paystack.js';
 import { presignUpload } from './uploads.js';
 import express from 'express';
 import cors from 'cors';
@@ -1122,9 +1122,17 @@ app.post('/api/v1/admin/disputes/:id/resolve', auth, ah(requireAdmin), ah(async 
   const payment = (await get('SELECT * FROM payments WHERE booking_id = ?', d.booking_id)) as any;
   const pen = Math.max(0, Number(penalty_ngn ?? 0) || 0);
   // Money moves only if escrow still held; settled jobs get record-only resolution + audit.
+  // Customer refunds go through Paystack: the payment is only marked refunded
+  // after Paystack confirms, otherwise nothing is written and the admin retries.
   let money: any = { moved: false };
+  let manualMessage: string | null = null;
   if (payment && payment.status === 'held' && booking) {
     if (action === 'refund_customer') {
+      try {
+        await createRefund(payment.gateway_ref);
+      } catch (e: any) {
+        return res.status(502).json({ error: `Paystack refund failed (${e?.message ?? 'unknown error'}). No records changed — safe to retry.` });
+      }
       await run('UPDATE payments SET status=?, updated_at=? WHERE booking_id=?', 'refunded', now, d.booking_id);
       money = { moved: true, refund_ngn: payment.amount_ngn };
     } else if (action === 'refund_vendor' && booking.vendor_id) {
@@ -1140,9 +1148,34 @@ app.post('/api/v1/admin/disputes/:id/resolve', auth, ah(requireAdmin), ah(async 
       money = { moved: true, vendor_payout_ngn: payout.amount_ngn };
     } else if (action === 'split' && booking.vendor_id) {
       const vendorShare = Math.min(pen > 0 ? pen : FUEL_PENALTY_NGN, payment.amount_ngn);
-      money = { moved: true, vendor_payout_ngn: vendorShare, refund_ngn: payment.amount_ngn - vendorShare };
+      const refundShare = payment.amount_ngn - vendorShare;
+      if (refundShare > 0) {
+        try {
+          await createRefund(payment.gateway_ref, refundShare * 100);
+        } catch (e: any) {
+          return res.status(502).json({ error: `Paystack refund failed (${e?.message ?? 'unknown error'}). No records changed — safe to retry.` });
+        }
+      }
+      const payout = {
+        id: crypto.randomUUID(), booking_id: d.booking_id, vendor_id: booking.vendor_id,
+        amount_ngn: vendorShare, penalty_ngn: 0, provider: payment.provider,
+        transfer_ref: `mock_dispute_${crypto.randomUUID().slice(0, 8)}`, status: 'completed', created_at: now,
+      };
+      await run(
+        'INSERT INTO payouts (id, booking_id, vendor_id, amount_ngn, penalty_ngn, provider, transfer_ref, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        payout.id, payout.booking_id, payout.vendor_id, vendorShare, 0, payout.provider, payout.transfer_ref, 'completed', now);
+      money = { moved: true, vendor_payout_ngn: vendorShare, refund_ngn: refundShare };
       await run('UPDATE payments SET status=?, updated_at=? WHERE booking_id=?', 'partial_refund', now, d.booking_id);
     }
+  } else if (payment && payment.status === 'split' && booking && (action === 'refund_customer' || action === 'split')) {
+    // Vendor was already paid out: never reverse automatically. Flag the
+    // payout row so ops can recover the money manually in the dashboard.
+    const refundShare = action === 'refund_customer'
+      ? payment.amount_ngn
+      : Math.max(0, payment.amount_ngn - Math.min(pen > 0 ? pen : FUEL_PENALTY_NGN, payment.amount_ngn));
+    await run('UPDATE payouts SET needs_manual_reversal=TRUE WHERE booking_id=?', d.booking_id);
+    money = { moved: false, requires_manual_reversal: true, refund_ngn: refundShare };
+    manualMessage = 'Vendor was already paid out. Refund requires manual reversal in the Paystack dashboard.';
   }
   const resolution = JSON.stringify({ action, penalty_ngn: pen, note: note ?? null, money });
   await run("UPDATE disputes SET status='resolved', resolution=?, resolved_at=? WHERE id=?", resolution, now, req.params.id);
@@ -1151,7 +1184,13 @@ app.post('/api/v1/admin/disputes/:id/resolve', auth, ah(requireAdmin), ah(async 
     await recordHistory(d.booking_id, booking.status, 'disputed', req.user.sub, null, null);
   }
   await audit(req.user.sub, 'dispute.resolve', 'dispute', req.params.id, { action, penalty_ngn: pen });
-  res.json({ ok: true, status: 'resolved', money });
+  res.json({
+    ok: true,
+    status: 'resolved',
+    money,
+    requires_manual_reversal: money.requires_manual_reversal === true,
+    message: manualMessage,
+  });
 }));
 
 // --- Vendor earnings (Phase 4 mock transfers) ---
