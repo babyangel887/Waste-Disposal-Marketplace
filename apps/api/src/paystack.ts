@@ -18,12 +18,18 @@ function secretKey(): string {
   return process.env.PAYSTACK_SECRET_KEY ?? '';
 }
 
-// Users have no email column — build a syntactically valid placeholder
-// address from the phone digits so Paystack initialize always has an email.
-export function placeholderEmail(phone: string, fallbackId: string): string {
+// Users have no email column — build a valid-format placeholder address from
+// the phone digits so Paystack initialize always has an email. The domain must
+// be a normal public domain: reserved TLDs like .local are rejected by
+// Paystack with a 400. Override with PAYSTACK_EMAIL_DOMAIN when you own one.
+export function placeholderEmail(
+  phone: string,
+  fallbackId: string,
+  domain: string = process.env.PAYSTACK_EMAIL_DOMAIN ?? 'wastemarketplace.com'
+): string {
   const digits = (phone ?? '').replace(/[^0-9]/g, '').slice(0, 40);
   const local = digits || fallbackId.replace(/[^a-zA-Z0-9]/g, '').slice(0, 40) || 'customer';
-  return `${local}@customers.waste.local`;
+  return `${local}@${domain}`;
 }
 
 export interface PaystackInitResult {
@@ -56,7 +62,14 @@ export async function initializeTransaction(
   }
   // Log only the HTTP status — never the secret, email, or body.
   console.log(`[paystack] initialize status=${res.status}`);
-  if (!res.ok) throw new Error(`Payment provider error (status ${res.status})`);
+  if (!res.ok) {
+    // Surface Paystack's own error message (status + message only — never the
+    // key, headers, or request body) so live failures are diagnosable.
+    const errBody: any = await res.json().catch(() => null);
+    const errMsg = errBody?.message ? String(errBody.message).slice(0, 200) : 'no message';
+    console.log(`[paystack] initialize failed status=${res.status} message=${errMsg}`);
+    throw new Error(`Payment provider error (status ${res.status})`);
+  }
   const data: any = await res.json().catch(() => null);
   if (!data?.status || !data?.data?.authorization_url || !data?.data?.reference) {
     throw new Error('Payment provider bad response');

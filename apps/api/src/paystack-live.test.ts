@@ -5,6 +5,18 @@ process.env.PAYSTACK_SECRET_KEY = 'test_paystack_secret_xxxxxxxx';
 process.env.PAYSTACK_BASE_URL = 'https://api.paystack.test';
 import crypto from 'node:crypto';
 import { app } from './index.js';
+import { placeholderEmail } from './paystack.js';
+
+// Generated customer emails must pass Paystack validation: normal public
+// domain (never a reserved TLD), overridable when you own a domain.
+if (placeholderEmail('+2348067935929', 'fallback') !== '2348067935929@wastemarketplace.com') {
+  throw new Error('ASSERT: placeholder uses valid domain by default');
+}
+console.log('ok - placeholder uses valid domain by default');
+if (placeholderEmail('', 'abc123', 'mydomain.com') !== 'abc123@mydomain.com') {
+  throw new Error('ASSERT: placeholder domain overridable');
+}
+console.log('ok - placeholder domain overridable');
 
 const base = 'http://127.0.0.1:4107';
 const SECRET = 'test_paystack_secret_xxxxxxxx';
@@ -12,9 +24,11 @@ const SECRET = 'test_paystack_secret_xxxxxxxx';
 // Stub only Paystack network calls; everything else goes to the real fetch
 // (the test client below uses global fetch to talk to the API server).
 const realFetch = globalThis.fetch;
+const seenInitBodies: any[] = [];
 (globalThis as any).fetch = (url: any, init: any) => {
   if (typeof url === 'string' && url.startsWith('https://api.paystack.test/transaction/initialize')) {
     const body = JSON.parse(String(init?.body ?? '{}'));
+    seenInitBodies.push(body);
     return Promise.resolve(
       new Response(
         JSON.stringify({
@@ -74,6 +88,12 @@ const server = app.listen(4107, async () => {
     assert(typeof pay.j.authorization_url === 'string', 'authorization_url returned');
     assert(pay.j.booking.status === 'awaiting_payment', 'booking waits for webhook');
     const ref: string = pay.j.payment.gateway_ref;
+    // initialize payload Paystack will accept: kobo integer + valid-format email
+    const sent = seenInitBodies[seenInitBodies.length - 1];
+    assert(Number.isInteger(sent?.amount) && sent.amount === total * 100, 'amount sent in kobo');
+    assert(typeof sent?.email === 'string' && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(sent.email), 'email has valid public format');
+    assert(!String(sent?.email ?? '').endsWith('.local'), 'email not on a reserved TLD');
+    assert(typeof sent?.reference === 'string' && sent.reference.length > 0, 'reference sent');
 
     // unsigned webhook rejected
     const noSig = await post('/api/v1/webhooks/paystack', { event: 'charge.success', data: { reference: ref } });
