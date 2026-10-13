@@ -5,7 +5,8 @@
   TODO: replace the two APK placeholders below with the real
   EAS build download links. Never invent a URL: leave the
   placeholder until you have the real link.
-  - CUSTOMER_APK_URL: TODO (customer preview APK download link)
+  - CUSTOMER_APK_URL: downloads/waste-customer.apk (relative link to the
+    APK copied into landing/downloads/, served by the same site)
   - VENDOR_APK_URL: TODO (vendor preview APK download link)
     The vendor APK button is hidden until this is filled in:
     remove the "hidden" attribute from #vendor-apk when ready.
@@ -58,8 +59,7 @@
         </ol>
         <div class="cta-row">
           <a class="btn btn-customer" href="https://waste-disposal-customer-app.netlify.app">Open the web app</a>
-          <!-- TODO: replace href="#" with the real CUSTOMER_APK_URL from above -->
-          <a class="btn btn-customer btn-ghost" href="#">Download the Android app</a>
+          <a class="btn btn-customer btn-ghost" href="downloads/waste-customer.apk" download>Download the Android app</a>
         </div>
         <p class="note">If your phone blocks the download, allow installs from this browser, then tap Install.</p>
       </div>

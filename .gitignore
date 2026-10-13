@@ -6,3 +6,4 @@ dev.db*
 uploads/
 *.log
 apk-output/
+landing/downloads/*.apk
