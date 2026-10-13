@@ -1,0 +1,5 @@
+# Serve APK downloads with the right type and force a download dialog.
+# This file only affects the /downloads/*.apk paths; nothing else changes.
+/downloads/*.apk
+  Content-Type: application/vnd.android.package-archive
+  Content-Disposition: attachment
