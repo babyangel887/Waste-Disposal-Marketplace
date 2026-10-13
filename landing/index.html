@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<!--
+  ============================================================
+  ALL SITE LINKS — EDIT HERE
+  TODO: replace the two APK placeholders below with the real
+  EAS build download links. Never invent a URL: leave the
+  placeholder until you have the real link.
+  - CUSTOMER_APK_URL: TODO (customer preview APK download link)
+  - VENDOR_APK_URL: TODO (vendor preview APK download link)
+    The vendor APK button is hidden until this is filled in:
+    remove the "hidden" attribute from #vendor-apk when ready.
+  Fixed links (already correct, do not change without reason):
+  - Customer web app: https://waste-disposal-customer-app.netlify.app
+  - Vendor web app:    https://waste-disposal-vendor-app.netlify.app
+  ============================================================
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Waste Disposal Marketplace — on-demand waste pickup in Lagos for customers, and verified collection jobs for vendors.">
+  <meta name="theme-color" content="#12351f">
+  <title>Waste Disposal Marketplace — Waste pickup in Lagos</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+
+  <header class="hero">
+    <div class="wrap">
+      <p class="brand"><span class="mark" aria-hidden="true">W</span> Waste Disposal Marketplace</p>
+      <h1>On-demand waste pickup in Lagos.</h1>
+      <p class="lede">Book a verified collector in minutes. Currently serving Eti-Osa and Ikeja.</p>
+      <div class="cta-row">
+        <a class="btn btn-customer" href="#customers">I need a pickup</a>
+        <a class="btn btn-vendor" href="#vendors">I&rsquo;m a vendor</a>
+      </div>
+    </div>
+  </header>
+
+  <main id="main">
+    <section id="customers" class="section customers" aria-labelledby="customers-h">
+      <div class="wrap">
+        <h2 id="customers-h">For customers</h2>
+        <ol class="steps">
+          <li>
+            <strong>1. Book.</strong>
+            Choose a waste category and quantity, drop a GPS pin with your address, and add at least one photo of the waste. You see the full price before you pay.
+          </li>
+          <li>
+            <strong>2. Track your driver on a map.</strong>
+            Once a verified vendor accepts, watch the driver&rsquo;s live position and your pickup point until arrival.
+          </li>
+          <li>
+            <strong>3. Pay securely.</strong>
+            You pay online when you book. The money is held safely and only goes to the vendor after the job is completed. You get a receipt in the app.
+          </li>
+        </ol>
+        <div class="cta-row">
+          <a class="btn btn-customer" href="https://waste-disposal-customer-app.netlify.app">Open the web app</a>
+          <!-- TODO: replace href="#" with the real CUSTOMER_APK_URL from above -->
+          <a class="btn btn-customer btn-ghost" href="#">Download the Android app</a>
+        </div>
+        <p class="note">If your phone blocks the download, allow installs from this browser, then tap Install.</p>
+      </div>
+    </section>
+
+    <section id="vendors" class="section vendors" aria-labelledby="vendors-h">
+      <div class="wrap">
+        <h2 id="vendors-h">For vendors</h2>
+        <p>
+          Vendors register in the vendor app and an admin reviews every
+          application. You can only accept jobs after your account is approved.
+          If anything changes, you can update your details and you will be
+          reviewed again.
+        </p>
+        <h3>What you are asked to submit</h3>
+        <ul>
+          <li>Phone number (verified with a one-time code) and business name.</li>
+          <li>Vehicle plate number and vehicle type. You may also add the load capacity and a vehicle photo.</li>
+          <li>All three documents, uploaded as photos: vehicle registration, driver&rsquo;s license, and business document.</li>
+          <li>You may add a business license number (optional).</li>
+        </ul>
+        <p>After you submit, your status is <em>pending</em> until an admin approves or rejects it. Approved vendors see paid job offers with the payout amount and accept them in the app.</p>
+        <div class="cta-row">
+          <a class="btn btn-vendor" href="https://waste-disposal-vendor-app.netlify.app">Register as a vendor</a>
+          <!-- TODO: replace href="#" with the real VENDOR_APK_URL and remove "hidden" -->
+          <a id="vendor-apk" class="btn btn-vendor btn-ghost" href="#" hidden>Download the Android vendor app</a>
+        </div>
+      </div>
+    </section>
+
+    <section id="payments" class="section payments" aria-labelledby="payments-h">
+      <div class="wrap">
+        <h2 id="payments-h">How payments work</h2>
+        <p>
+          The customer pays online at booking time through Paystack. That money
+          is <strong>held</strong> — not sent to anyone yet. When the vendor
+          completes the pickup, the held amount is released to the vendor and
+          both sides can see the result on the receipt. Cash payment is not
+          accepted in the app.
+        </p>
+        <p>
+          If something goes wrong, either side can raise a dispute on a
+          completed or cancelled booking. An admin reviews it and decides:
+          refund the customer, pay the vendor, or split it. Approved refunds go
+          back through Paystack; if the vendor was already paid out, the refund
+          is completed manually and the customer is told so in the app.
+        </p>
+      </div>
+    </section>
+
+    <section id="faq" class="section faq" aria-labelledby="faq-h">
+      <div class="wrap">
+        <h2 id="faq-h">Frequently asked questions</h2>
+        <dl>
+          <div>
+            <dt>Which areas do you serve?</dt>
+            <dd>Eti-Osa and Ikeja in Lagos. Bookings outside these areas are not accepted yet.</dd>
+          </div>
+          <div>
+            <dt>How do I log in? Is there a password?</dt>
+            <dd>Customers and vendors log in with their phone number and a one-time code sent to that number. There is no password to remember.</dd>
+          </div>
+          <div>
+            <dt>When exactly am I charged?</dt>
+            <dd>When you book. You approve the full price up front, the money is held, and it is released to the vendor only after the job is completed.</dd>
+          </div>
+          <div>
+            <dt>Can I pay cash to the driver?</dt>
+            <dd>No. The app blocks cash payments — every booking must be paid online when you book.</dd>
+          </div>
+          <div>
+            <dt>What must vendors submit to join?</dt>
+            <dd>Business name, vehicle plate number and type, plus photos of three documents: vehicle registration, driver&rsquo;s license, and business document. An admin reviews the application before the vendor can accept jobs.</dd>
+          </div>
+          <div>
+            <dt>What if something goes wrong with my pickup?</dt>
+            <dd>Raise a dispute from the app on the completed or cancelled booking. An admin reviews it and can refund you, pay the vendor, or split the amount — and you can see the outcome in the app.</dd>
+          </div>
+        </dl>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="wrap">
+      <h2>Contact</h2>
+      <!-- TODO: fill in the real contact details -->
+      <p>Business name: TODO</p>
+      <p>Phone: TODO</p>
+      <p>Email: TODO</p>
+      <p class="fine">Waste Disposal Marketplace · Pilot in Eti-Osa and Ikeja, Lagos</p>
+    </div>
+  </footer>
+</body>
+</html>
