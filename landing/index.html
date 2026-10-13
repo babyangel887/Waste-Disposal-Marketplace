@@ -7,9 +7,8 @@
   placeholder until you have the real link.
   - CUSTOMER_APK_URL: downloads/waste-customer.apk (relative link to the
     APK copied into landing/downloads/, served by the same site)
-  - VENDOR_APK_URL: TODO (vendor preview APK download link)
-    The vendor APK button is hidden until this is filled in:
-    remove the "hidden" attribute from #vendor-apk when ready.
+  - VENDOR_APK_URL: downloads/waste-vendor.apk (relative link to the
+    APK copied into landing/downloads/, served by the same site)
   Fixed links (already correct, do not change without reason):
   - Customer web app: https://waste-disposal-customer-app.netlify.app
   - Vendor web app:    https://waste-disposal-vendor-app.netlify.app
@@ -84,8 +83,7 @@
         <p>After you submit, your status is <em>pending</em> until an admin approves or rejects it. Approved vendors see paid job offers with the payout amount and accept them in the app.</p>
         <div class="cta-row">
           <a class="btn btn-vendor" href="https://waste-disposal-vendor-app.netlify.app">Register as a vendor</a>
-          <!-- TODO: replace href="#" with the real VENDOR_APK_URL and remove "hidden" -->
-          <a id="vendor-apk" class="btn btn-vendor btn-ghost" href="#" hidden>Download the Android vendor app</a>
+          <a id="vendor-apk" class="btn btn-vendor btn-ghost" href="downloads/waste-vendor.apk" download>Download the Android vendor app</a>
         </div>
       </div>
     </section>
