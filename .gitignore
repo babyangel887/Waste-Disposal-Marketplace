@@ -7,3 +7,6 @@ uploads/
 *.log
 apk-output/
 landing/downloads/*.apk
+*.jks
+*.keystore
+*.p12
